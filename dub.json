@@ -1,0 +1,20 @@
+{
+    "name": "raider-engine",
+    "description": "A small game engine in D.",
+    "homepage": "https://github.com/Raiderium/RaiderEngine",
+    "license": "MIT",
+    "authors": ["Aiden Sibley"],
+
+    "targetName": "RaiderEngine",
+    "targetPath": "lib",
+
+    "versions": ["DerelictODE_DoublePrecision"],
+
+    "dependencies": {
+        "raider-math": "~master",
+        "derelict-gl3": "~master",
+        "derelict-ode": "~master",
+        "derelict-physfs": "~master",
+        "derelict-sfml2": "~master",
+    }
+}
