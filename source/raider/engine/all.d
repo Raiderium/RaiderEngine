@@ -10,6 +10,7 @@ public
 	import raider.engine.audio.sound;
 	import raider.engine.audio.speaker;
 
+	import raider.engine.game.cable;
 	import raider.engine.game.entity;
 	import raider.engine.game.factory;
 	import raider.engine.game.game;
@@ -26,7 +27,6 @@ public
 
 	import raider.engine.render.armature;
 	import raider.engine.render.artist;
-	import raider.engine.render.cable;
 	import raider.engine.render.camera;
 	import raider.engine.render.gl;
 	import raider.engine.render.light;

@@ -2,7 +2,9 @@
 
 import raider.math.all;
 import raider.engine.physics.ode;
+import raider.engine.physics.shape;
 import raider.engine.physics.world;
+import raider.engine.tool.array;
 import raider.engine.tool.reference;
 
 /**
