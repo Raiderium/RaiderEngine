@@ -96,11 +96,11 @@ R!T New(T, Args...)(Args args)
 	enum size = __traits(classInstanceSize, (R!T).B);
 
 	//Allocate space for the object and a refcount.
-	void* m = malloc(uint.sizeof + size);
+	void* m = malloc(ulong.sizeof + size);
 	if(!m) onOutOfMemoryError;
 	scope(failure) core.stdc.stdlib.free(m);
 	
-	void* o = m + uint.sizeof;
+	void* o = m + ulong.sizeof;
 	
 	//Got anything the GC needs to worry about?
 	static if(hasGarbage!T)
@@ -110,7 +110,7 @@ R!T New(T, Args...)(Args args)
 	}
 	
 	//Initialise refcounts to 0
-	*cast(uint*)m = 0;
+	*cast(ulong*)m = 0;
 	return R!T(emplace!(R!(T).B)(o[0..size], args));
 }
 
@@ -133,16 +133,19 @@ struct R(T) if(is(T == struct) || isScalarType!T ||
 	static if(is(T == struct) || isScalarType!T)
 		class B {
 			T _t; alias _t this;
-			static if(is(T == struct)) this(A...)(A a) { _t = T(a); }
-			else this(T t) { _t = t; } }
+			static
+				if(is(T == struct)) this(A...)(A a) { _t = T(a); }
+			else
+				this(T t) { _t = t; }
+	}
 	else alias T B;
 
 	//The reference. Union with void* allows convenient access.
 	union { B _b = null; void* _void; }
 
 	//Reference counting semantics.
-	shared(ushort)* refs() { return (cast(shared(ushort)*)_void) - 2; }
-	shared(ushort)* wefs() { return (cast(shared(ushort)*)_void) - 1; }
+	shared(uint)* refs() { return (cast(shared(uint)*)_void) - 2; }
+	shared(uint)* wefs() { return (cast(shared(uint)*)_void) - 1; }
 	void _incref() { if(_b) atomicOp!"+="(*refs, 1); }
 	void _decref() { if(_b && atomicOp!"-="(*refs, 1) == 0) _delete; }
 
@@ -159,11 +162,11 @@ struct R(T) if(is(T == struct) || isScalarType!T ||
 		//Let's not let a throwing destructor ruin the fun
 		scope(exit)
 		{
-			debug assert(*wefs == 0);
+			assert(*wefs == 0);
 			//TODO Zombies.
 			
 			static if(hasGarbage!T) GC.removeRange(o);
-			core.stdc.stdlib.free(o - uint.sizeof);
+			core.stdc.stdlib.free(o - ulong.sizeof);
 			
 			_b = null;
 		}
@@ -212,7 +215,7 @@ version(unittest)
 	struct S5
 	{
 		R!C4 c4;
-		R!C5 c5; //This is a reference cycle example.
+		R!C5 c5;
 		this(int foo) { printf("S5\n"); this.foo = foo; }
 		this(this) { assert(0, "Boxed S5 struct copy"); }
 		~this() { printf("~S5\n"); }
@@ -310,27 +313,34 @@ unittest
  * of a lethal assert. It can be disabled for well-tested 
  * releases, reducing the garbage collection footprint.
  * 
- * Weak reference checks are enabled in debug mode.
+ * Weak reference checks are disabled in release mode.
  */
 struct W(T)
 	if(is(T == class) || is(T == struct) || 
 	   is(T == interface) || isScalarType!T)
 {private:
 	alias R!(T).B B; union { B _b = null; void* _void; }
-	shared(ushort)* wefs() { return (cast(shared(ushort)*)_void) - 1; }
-	void _incwef() { debug if(_b) atomicOp!"+="(*wefs, 1); }
-	void _decwef() { debug if(_b) atomicOp!"-="(*wefs, 1); }
+	shared(uint)* wefs() { return (cast(shared(uint)*)_void) - 1; }
+
+	version(assert)
+	{
+		void _incwef() { if(_b) atomicOp!"+="(*wefs, 1); }
+		void _decwef() { if(_b) atomicOp!"-="(*wefs, 1); }
+	}
 	
 public:
 	alias _b this;
 	
-	this(A:B)(A that) { _b = that._b; _incwef; }
-	this(this) { _incwef; } 
-	~this() { _decwef; }
+	this(A:B)(A that) { _b = that._b; version(assert) _incwef; }
+	version(assert)
+	{
+		this(this) { _incwef; } 
+		~this() { _decwef; }
+	}
 	
 	void opAssign(A:T)(R!A rhs) { swap(_b, rhs._b); }
 	void opAssign(A:T)(W!A rhs) { swap(_b, rhs._b); }
-	void opAssign(typeof(null) wut) { _decwef; _b = null; }
+	void opAssign(typeof(null) wut) { version(assert) _decwef; _b = null; }
 	
 	A opCast(A)() const if(isInstanceOf!(W, A)) { return A(cast(A.B)_b); }
 	A opCast(A)() const if(!isInstanceOf!(W, A)) { return cast(A)_b; }
