@@ -91,7 +91,7 @@ version(unittest)
  * Allocates and constructs a reference counted object.
  */
 R!T New(T, Args...)(Args args)
-	if(is(T == class) || is(T == struct) || isScalarType!T)
+if(is(T == class) || is(T == struct) || isScalarType!T)
 {
 	enum size = __traits(classInstanceSize, (R!T).B);
 
@@ -125,18 +125,22 @@ R!T New(T, Args...)(Args args)
  * it is immediately deconstructed. This guarantee is 
  * what makes reference counting actually useful.
  */
-struct R(T) if(is(T == struct) || isScalarType!T ||
-               is(T == class) || is(T == interface))
+struct R(T)
+if(is(T == struct) || is(T == class) ||
+   is(T == interface) || isScalarType!T)
 {private:
 	
 	//Box value types.
 	static if(is(T == struct) || isScalarType!T)
-		class B {
+	{
+		class B
+		{
 			T _t; alias _t this;
-			static
-				if(is(T == struct)) this(A...)(A a) { _t = T(a); }
+			static if(is(T == struct))
+				this(A...)(A a) { _t = T(a); } 
 			else
 				this(T t) { _t = t; }
+		}
 	}
 	else alias T B;
 
@@ -198,20 +202,7 @@ version(unittest)
 		this(int x) { printf("C4\n"); }
 		~this() { printf("~C4\n"); }
 	}
-	
-	class C5
-	{
-		R!S5 s5; //Garbage collector finds this insignificant and boring!
-		R!C4 c4; //Forms a reference cycle if c4.c5 is initialised to this.
 
-		this(R!C4 c4, R!S5 s5) { printf("C5\n"); this.c4 = c4; this.s5 = s5; }
-		~this() { printf("~C5\n"); }
-	}
-	
-	//FIXME Defining S5 above C5 causes isNumeric to explode.
-	//Uncommenting the line below and putting it above S5 fixes it.
-	//static if(isNumeric!C5) {}
-	//Is this a DMD bug? Feels vaguely like one.
 	struct S5
 	{
 		R!C4 c4;
@@ -220,6 +211,20 @@ version(unittest)
 		this(this) { assert(0, "Boxed S5 struct copy"); }
 		~this() { printf("~S5\n"); }
 		int foo;
+	}
+
+	class C5
+	{
+		R!S5 s5; //Garbage collector finds this insignificant and boring!
+		R!C4 c4; //Forms a reference cycle if c4.c5 is initialised to this.
+
+		this(R!C4 c4, R!S5 s5)
+		{
+			printf("C5\n");
+			this.c4 = c4;
+			this.s5 = s5;
+		}
+		~this() { printf("~C5\n"); }
 	}
 }
 
@@ -316,8 +321,8 @@ unittest
  * Weak reference checks are disabled in release mode.
  */
 struct W(T)
-	if(is(T == class) || is(T == struct) || 
-	   is(T == interface) || isScalarType!T)
+if(is(T == class) || is(T == struct) || 
+   is(T == interface) || isScalarType!T)
 {private:
 	alias R!(T).B B; union { B _b = null; void* _void; }
 	shared(uint)* wefs() { return (cast(shared(uint)*)_void) - 1; }
@@ -330,8 +335,9 @@ struct W(T)
 	
 public:
 	alias _b this;
-	
-	this(A:B)(A that) { _b = that._b; version(assert) _incwef; }
+
+	this(A:B)(A that) { _b = that; version(assert) _incwef; }
+
 	version(assert)
 	{
 		this(this) { _incwef; } 
