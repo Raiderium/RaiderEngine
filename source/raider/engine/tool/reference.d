@@ -31,6 +31,9 @@
  * Do not create circular references.
  * This system cannot detect them.
  * Use weak references to avoid them.
+ * 
+ * Not compatible with any system that mishandles structs.
+ * I.e. associative arrays. Use tool.map.
  */
 
 module raider.engine.tool.reference;
@@ -87,13 +90,35 @@ version(unittest)
 	static assert(hasGarbage!(void*));
 }
 
+//Evaluates to a reference type, encapsulating value types.
+private template Box(T)
+{
+	static if(is(T == class) || is(T == interface))
+	{
+		alias T Box;
+	}
+	else static if(is(T == struct) || isScalarType!T)
+	{
+		class Box
+		{
+			T _t; alias _t this;
+			static if(is(T == struct))
+				this(A...)(A a) { _t = T(a); } 
+			else
+				this(T t) { _t = t; }
+		}
+	}
+	else
+		static assert(0, T.stringof~" is not a boxable type");
+}
+
 /**
  * Allocates and constructs a reference counted object.
  */
 R!T New(T, Args...)(Args args)
 if(is(T == class) || is(T == struct) || isScalarType!T)
 {
-	enum size = __traits(classInstanceSize, (R!T).B);
+	enum size = __traits(classInstanceSize, Box!T);
 
 	//Allocate space for the object and a refcount.
 	void* m = malloc(ulong.sizeof + size);
@@ -111,7 +136,7 @@ if(is(T == class) || is(T == struct) || isScalarType!T)
 	
 	//Initialise refcounts to 0
 	*cast(ulong*)m = 0;
-	return R!T(emplace!(R!(T).B)(o[0..size], args));
+	return R!T(emplace!(Box!T)(o[0..size], args));
 }
 
 /**
@@ -126,23 +151,10 @@ if(is(T == class) || is(T == struct) || isScalarType!T)
  * what makes reference counting actually useful.
  */
 struct R(T)
-if(is(T == struct) || is(T == class) ||
-   is(T == interface) || isScalarType!T)
+if(is(T == class) || is(T == interface) ||
+   is(T == struct) || isScalarType!T)
 {private:
-	
-	//Box value types.
-	static if(is(T == struct) || isScalarType!T)
-	{
-		class B
-		{
-			T _t; alias _t this;
-			static if(is(T == struct))
-				this(A...)(A a) { _t = T(a); } 
-			else
-				this(T t) { _t = t; }
-		}
-	}
-	else alias T B;
+	alias Box!T B;
 
 	//The reference. Union with void* allows convenient access.
 	union { B _b = null; void* _void; }
@@ -159,10 +171,17 @@ if(is(T == struct) || is(T == class) ||
 		void* o = _void;
 		
 		//alias this makes it mildly impossible to call B.~this
-		static if(is(T == struct)) destroy(_b._t);
-		else static if(!isScalarType!T) destroy(_b);
-		//FIXME Likely to explode if T uses alias this...
-		
+		//FIXME Likely to explode if T uses alias this
+		static if(is(T == struct))
+		{
+			destroy(_b._t);
+		}
+		else static if(is(T == class) || is(T == interface))
+		{
+			destroy(_b);
+		}
+		//numeric types don't need destruction
+
 		//Let's not let a throwing destructor ruin the fun
 		scope(exit)
 		{
@@ -321,10 +340,10 @@ unittest
  * Weak reference checks are disabled in release mode.
  */
 struct W(T)
-if(is(T == class) || is(T == struct) || 
-   is(T == interface) || isScalarType!T)
+if(is(T == class) || is(T == interface) ||
+   is(T == struct)|| isScalarType!T)
 {private:
-	alias R!(T).B B; union { B _b = null; void* _void; }
+	alias Box!T B; union { B _b = null; void* _void; }
 	shared(uint)* wefs() { return (cast(shared(uint)*)_void) - 1; }
 
 	version(assert)
