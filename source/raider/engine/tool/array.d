@@ -1,9 +1,10 @@
 ﻿module raider.engine.tool.array;
 
-import raider.engine.tool.reference;
 import raider.math.tools : nhpo2;
+import raider.engine.tool.reference : hasGarbage;
 import core.stdc.stdlib;
 import core.memory;
+import std.conv;
 import core.stdc.string : memcpy, memmove;
 import std.traits;
 import std.algorithm : swap, initializeAll, sort;
@@ -24,9 +25,7 @@ import std.bitmanip;
  */
 struct Array(T) //TODO Array unittests
 {private:
-	size_t _data = 0; ///Probably nothing of interest
-	@property T* data() { return cast(T*)_data; }
-	@property void data(T* value) { _data = cast(size_t)value; }
+	T* data;
 
 	size_t _size = 0; ///Number of items stored
 
@@ -40,6 +39,11 @@ public:
 	@property void size(size_t value) { resize(value); }
 	@property bool snug() { return _snug; }
 	@property bool sorted() { return _sorted; }
+
+	this(L...)(L list)
+	{
+		foreach(item; list) add(item);
+	}
 
 	this(this)
 	{
@@ -64,6 +68,11 @@ public:
 	void opAssign(Array!T that)
 	{
 		swap(this, that);
+	}
+
+	bool opEquals(T[] that)
+	{
+		return data[0.._size] == that;
 	}
 	
 	alias size length;
@@ -117,10 +126,10 @@ public:
 			//TODO Profile (with LDC). A normal copy will be better below a certain critical size.
 			memcpy(newData, data, T.sizeof * index);
 			memcpy(newData+index+amount, data+index, T.sizeof * (_size - index));
-			if(hasAliasing!T)
+			if(hasGarbage!T)
 			{
 				GC.addRange(cast(void*)newData, T.sizeof * newCapacity);
-				GC.removeRange(cast(void*)_data);
+				GC.removeRange(cast(void*)data);
 			}
 			free(data);
 			data = newData;
@@ -153,7 +162,7 @@ public:
 			T* newData = cast(T*)malloc(T.sizeof * newCapacity);
 			memcpy(newData, data, T.sizeof * index);
 			memcpy(newData+index, data+index+amount, T.sizeof * (_size-(index+amount)));
-			if(hasAliasing!T)
+			if(hasGarbage!T)
 			{
 				GC.addRange(cast(void*)newData, T.sizeof * newCapacity);
 				GC.removeRange(cast(void*)data);
@@ -178,7 +187,7 @@ public:
 		{
 			T* newData = cast(T*)malloc(T.sizeof * _size);
 			memcpy(newData, data, T.sizeof * _size);
-			if(hasAliasing!T)
+			if(hasGarbage!T)
 			{
 				GC.addRange(cast(void*)newData, T.sizeof * _size);
 				GC.removeRange(cast(void*)data);
@@ -245,24 +254,22 @@ public:
 	 * items after it (if any) to the right.
 	 * 
 	 * This swaps the item into the array, replacing the supplied item with T.init.
+	 * If an r-value is given, it makes a copy.
 	 */
-	void add(ref T item, size_t index = _size)
+	void add()(auto ref T item, size_t index)
 	{
 		upsize(index, 1);
-		swap(data[index-1], item);
+		swap(data[index], item);
 		_sorted = false;
 	}
 
-	/**
-	 * Add copy of item to array.
-	 */
-	void add(const T item, size_t index = _size)
+	void add()(auto ref T item)
 	{
-		upsize(index, 1);
-		data[index-1] = item;
+		upsize(_size, 1);
+		swap(data[_size-1], item);
 		_sorted = false;
 	}
-	
+
 	/**
 	 * Insert item in sorted order.
 	 * 
@@ -271,7 +278,7 @@ public:
 	 * 
 	 * This swaps the item into the array, replacing the supplied item with T.init.
 	 */
-	void addSorted(ref T item)
+	void addSorted()(auto ref T item)
 	{
 		if(_sorted && _size)
 		{
@@ -384,7 +391,7 @@ public:
 	 */
 	bool find(const T item, out size_t foundIndex)
 	{
-		//TODO Binary search if _sorted. Also, predicate mixin search.
+		//TODO Binary search if _sorted.
 		foreach(x; 0.._size)
 		{
 			if(data[x] == item)
@@ -412,4 +419,61 @@ public:
 	}
 	
 	@property bool empty() { return _size == 0; }
+
+	string toString()
+	{
+		string result = "[";
+		
+		foreach(uint index, ref T item; this)
+		{
+			result ~= to!string(item);
+			if(index < _size-1) result ~= ", ";
+		}
+		result ~= "]";
+		return result;
+	}
+}
+
+unittest
+{
+	Array!int a1;
+
+	a1.add(1);
+	assert(a1[0] == 1);
+	assert(a1.length == 1);
+
+	//Resize
+	a1.resize(100);
+	assert(a1.size == 100);
+
+	//Capacity
+	assert(a1.capacity == 128);
+	a1.resize(20);
+	assert(a1.capacity == 32);
+
+	//Contains
+	assert(a1.contains(1));
+
+	//Variadic construction
+	a1 = Array!int(1, 2, 3, 4, 5);
+
+	assert(a1.contains(1));
+	assert(a1.contains(2));
+	assert(a1.contains(5));
+
+	//Remove item
+	a1.removeItem(2);
+	assert(!a1.contains(2));
+
+	assert(a1.toString == "[1, 3, 4, 5]");
+
+	//Sort
+	a1 = Array!int(5, 2, 3, 4, 1, 1, 5);
+	a1.sort;
+	assert(a1 == [1,1,2,3,4,5,5]);
+
+	//Add sorted
+	a1 = Array!int(1, 2, 4, 5);
+	a1.addSorted(3);
+	assert(a1 == [1,2,3,4,5]);
 }
