@@ -38,7 +38,6 @@
 
 module raider.engine.tool.reference;
 
-import std.stdio;
 import std.conv;
 import std.algorithm;
 import std.traits;
@@ -47,14 +46,18 @@ import core.exception;
 import core.memory;
 import core.stdc.stdlib;
 
+import raider.engine.tool.array;
+
 //Evaluates true if an aggregate type has scannable fields.
-private template hasGarbage(T)
+package template hasGarbage(T)
 {
 	template Impl(T...)
 	{
 		static if (!T.length)
 			enum Impl = false;
-		else static if(isInstanceOf!(R, T[0]) || isInstanceOf!(W, T[0]))
+		else static if(isInstanceOf!(R, T[0]) || 
+		               isInstanceOf!(W, T[0]) ||
+		               isInstanceOf!(Array, T[0]))
 			enum Impl = Impl!(T[1 .. $]);
 		else static if(is(T[0] == struct) || is(T[0] == union))
 			enum Impl = Impl!(FieldTypeTuple!(T[0]), T[1 .. $]);
@@ -218,17 +221,17 @@ version(unittest)
 	{
 		C5 c5; //Garbage collector is interested in this!
 
-		this(int x) { printf("C4\n"); }
-		~this() { printf("~C4\n"); }
+		this(int x) { }
+		~this() { }
 	}
 
 	struct S5
 	{
 		R!C4 c4;
 		R!C5 c5;
-		this(int foo) { printf("S5\n"); this.foo = foo; }
+		this(int foo) { this.foo = foo; }
 		this(this) { assert(0, "Boxed S5 struct copy"); }
-		~this() { printf("~S5\n"); }
+		~this() { }
 		int foo;
 	}
 
@@ -239,11 +242,10 @@ version(unittest)
 
 		this(R!C4 c4, R!S5 s5)
 		{
-			printf("C5\n");
 			this.c4 = c4;
 			this.s5 = s5;
 		}
-		~this() { printf("~C5\n"); }
+		~this() { }
 	}
 }
 
@@ -274,23 +276,23 @@ version(unittest)
 {
 	class Animal
 	{
-		this() { printf("Animal\n"); }
-		~this() { printf("~Animal\n"); }
+		this() { }
+		~this() { }
 		abstract void bite();
 	}
 	
 	class Dog : Animal
 	{
-		this() { printf("Dog\n"); }
-		~this() { printf("~Dog\n"); }
-		override void bite() { printf("Dog.bite\n"); }
+		this() { }
+		~this() { }
+		override void bite() { }
 	}
 	
 	class Cat : Animal
 	{
-		this() { printf("Cat\n"); }
-		~this() { printf("~Cat\n"); }
-		override void bite() { printf("Cat.bite\n"); }
+		this() { }
+		~this() { }
+		override void bite() { }
 	}
 	
 	void poke(R!Animal animal)
