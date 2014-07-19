@@ -115,7 +115,7 @@ template Box(T)
 			static if(is(T == struct))
 				this(A...)(A a) { _t = T(a); } 
 			else
-				this(T t) { _t = t; }
+				this(T t = 0) { _t = t; }
 		}
 	}
 	else
@@ -259,33 +259,37 @@ public:
 	 * A weak reference fulfills that trust.
 	 * A pointer reference often does not (don't risk it).
 	 */
-	this(A:B)(A that)
+	this(B that)
 	{
 		if(that)
 		{
+			_referent = that;
+
+			bool acquire;
 			Header get, set;
 			do
 			{
-				_referent = that;
+				acquire = true;
 				get = set = atomicLoad(header);
 
 				//If refs are 0 or max, do not acquire.
 				//(destruction in progress or complete)
 				if(set.refs == ushort.max || set.refs == 0)
-					_referent = null;
-
+					acquire = false;
 				//Otherwise, incref.
 				else
-					set.refs += 1; 
+					set.refs += 1;
 			}
 			while(!cas(&header(), get, set));
+
+			if(!acquire) _referent = null;
 		}
 	}
 	this(this) { _incref; }
 	~this() { _decref; }
 
 	void opAssign(A:T)(R!A rhs) { swap(_referent, rhs._referent); }
-	void opAssign(A:T)(W!A rhs) { this = R!A(rhs); }
+	void opAssign(A:T)(W!A rhs) { this = R!A(rhs._referent); }
 	void opAssign(typeof(null) wut) { _decref; _referent = null; }
 
 	A opCast(A)() const if(isReference!A)
@@ -328,7 +332,8 @@ version(unittest)
 {
 	import std.stdio;
 	int printfNope(in char* fmt, ...) { return 0; }
-	alias printf log;
+	alias printfNope log;
+	//alias printf log;
 
 	class C4 { C5 c5; this(int x) { log("C4\n"); } ~this() { log("~C4\n"); } }
 
@@ -403,8 +408,8 @@ unittest
 	assert(cast(R!Cat)a == null);
 
 	//Cannot implicitly downcast, requires language support.
-	//poke(d); //Doesn't work. Sadface.
-	poke(cast(R!Animal)d); //Works. Meh.
+	//poke(d);
+	poke(cast(R!Animal)d);
 }
 
 /**
@@ -458,18 +463,36 @@ if(is(T == class) || is(T == interface) ||
 	}
 	
 public:
-	alias _referent this;
+	R!T _strongReferent() { return R!T(_referent); }
+	alias _strongReferent this;
 
-	this(A:B)(A that) { _referent = that; _incwef; }
+	this(B that) { _referent = that; _incwef; }
 	this(this) { _incwef; } 
 	~this() { _decwef; }
 
 	void opAssign(A:T)(W!A rhs) { swap(_referent, rhs._referent); }
 	void opAssign(A:T)(R!A rhs) { this = W!A(rhs); }
 	void opAssign(typeof(null) wut) { _decwef; _referent = null; }
-	
-	A opCast(A)() const if(isReference(A)) { return A(cast(A.B)_referent); }
-	A opCast(A)() const if(!isReference(A)) { return cast(A)_referent; }
+
+	void _free()
+	{
+		static if(hasGarbage!T) GC.removeRange(_void);
+		core.stdc.stdlib.free(_void - Header.sizeof);
+	}
+}
+
+unittest
+{
+	class WC1 {
+		this() { log("WC1()\n"); }
+		~this() { log("~WC1()\n"); } }
+
+	R!WC1 r = New!WC1();
+	W!WC1 w = r; assert(w != null);
+	R!WC1 rr = w; assert(rr != null);
+	r = null; assert(w != null); 
+	rr = null; assert(w == null);
+	r = w; assert(r == null);
 }
 
 /**
@@ -506,12 +529,12 @@ public:
 
 	version(assert)
 	{
-		this(A:B)(A that) { _referent = that; _incpef; }
+		this(B that) { _referent = that; _incpef; }
 		this(this) { _incpef; } 
 		~this() { _decpef; }
 	}
 	else
-		this(A:B)(A that) { _referent = that; }
+		this(B that) { _referent = that; }
 
 	void opAssign(A:T)(P!A rhs) { swap(_referent, rhs._referent); }
 	void opAssign(A:T)(R!A rhs) { this = P!A(rhs); }
