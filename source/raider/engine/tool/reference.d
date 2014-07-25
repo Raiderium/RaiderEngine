@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Reference-count garbage collection
  * 
  * Provides garbage collection based on reference
@@ -26,11 +26,6 @@
  * Sometimes it is valuable or inevitable, particularly
  * with exception handling. But, by using determinism 
  * where it counts, we make our games smoother.
- *
- * Very important warning you saw coming miles off:
- * Do not create circular references.
- * This system cannot detect them.
- * Use weak references to avoid them.
  * 
  * Not compatible with any system that mishandles structs.
  * I.e. associative arrays. Use tool.map.
@@ -38,13 +33,12 @@
 
 module raider.engine.tool.reference;
 
-import std.conv;
-import std.algorithm;
+import std.conv : emplace;
 import std.traits;
 import core.atomic;
-import core.exception;
-import core.memory;
-import core.stdc.stdlib;
+import core.exception : onOutOfMemoryError;
+import core.memory : GC;
+import core.stdc.stdlib : malloc, free;
 
 import raider.engine.tool.array;
 
@@ -56,17 +50,47 @@ package template hasGarbage(T)
 		static if (!T.length)
 			enum Impl = false;
 		else static if(isInstanceOf!(R, T[0]) || 
-		               isInstanceOf!(P, T[0]) ||
 		               isInstanceOf!(W, T[0]) ||
+		               isInstanceOf!(P, T[0]) ||
 		               isInstanceOf!(Array, T[0]))
 			enum Impl = Impl!(T[1 .. $]);
 		else static if(is(T[0] == struct) || is(T[0] == union))
 			enum Impl = Impl!(FieldTypeTuple!(T[0]), T[1 .. $]);
 		else
 			enum Impl = hasIndirections!(T[0]) || Impl!(T[1 .. $]);
+
+		/* TODO Allow weak references to break cycles.
+		 * 
+		 * Reference template evaluation fails when
+		 * references form a cycle. T.tupleof fails 
+		 * because T is a forward reference.
+		 * 
+		 * Presumably a recursion issue; how can it
+		 * know the structure of T until evaluating
+		 * R!T; how can it finish evaluating R!T until
+		 * it knows the structure of T, etc.
+		 * 
+		 * Oddly enough, T.tupleof only fails in 
+		 * ~this() and static scope; it works fine 
+		 * in this() and other methods.
+		 * 
+		 * Electing to ignore until the manure hits 
+		 * the windmill and a class absolutely must
+		 * have a non-pointer reference to its kin.
+		 * The solution is to change the weak
+		 * reference strategy from zombies to a list 
+		 * of weak references, or a zombie monitor.
+		 * 
+		 * Serendipitously, the evaluation failure
+		 * can be used to detect reference cycles
+		 * at compile time.
+		 */
 	}
-	
-	static if(isInstanceOf!(R, T) || isInstanceOf!(W, T))
+
+	static if(isInstanceOf!(R, T) || 
+	          isInstanceOf!(W, T) ||
+	          isInstanceOf!(P, T) ||
+	          isInstanceOf!(Array, T))
 		enum hasGarbage = false;
 	else
 		enum hasGarbage = Impl!(FieldTypeTuple!T);
@@ -76,78 +100,68 @@ version(unittest)
 {
 	struct hasGarbageTest
 	{
-	struct S1 { void* ptr; } static assert(hasGarbage!S1);
-	struct S2 { int ptr; } static assert(!hasGarbage!S2);
-	struct S3 { R!int i; } static assert(!hasGarbage!S3);
-	struct S4 { int l; union { int i; R!int j; void* k; }} static assert(hasGarbage!S4);
-	class C1 { void* ptr; } static assert(hasGarbage!C1);
-	class C2 { int ptr; } static assert(!hasGarbage!C2);
-	class C3 { R!int i; } static assert(!hasGarbage!C3);
-	class C4 { R!(R!int) ii; } static assert(!hasGarbage!C4);
-	static assert(!hasGarbage!(R!int));
-	//static assert(!hasGarbage!(R!(void*))); TODO Allow boxing of pointers.
-	static assert(hasGarbage!(void*));
+		struct S1 { void* ptr; } static assert(hasGarbage!S1);
+		struct S2 { int ptr; } static assert(!hasGarbage!S2);
+		struct S3 { R!int i; } static assert(!hasGarbage!S3);
+		struct S4 { union { int i; R!int j; }} static assert(!hasGarbage!S4);
+		class C1 { void* ptr; } static assert(hasGarbage!C1);
+		class C2 { int ptr; } static assert(!hasGarbage!C2);
+		class C3 { R!int i; } static assert(!hasGarbage!C3);
+		class C4 { R!(R!int) ii; } static assert(!hasGarbage!C4);
+		//class C5 { W!C5 i; } //See to-do in hasGarbage.
+		class C7 { P!C7 i; } static assert(!hasGarbage!C7);
+		static assert(!hasGarbage!(R!int));
+		//static assert(!hasGarbage!(R!(void*))); TODO Pointer boxing?
+		static assert(hasGarbage!(void*));
 	}
 }
 
-private:
-
-private template isReference(T)
+private template Box(T)
 {
-	enum isReference = 
-		isInstanceOf!(R, T) || 
-		isInstanceOf!(W, T) ||
-		isInstanceOf!(P, T);
-}
-
-//Encapsulates value types.
-template Box(T)
-{
-	static if(is(T == class) || is(T == interface))
-	{
-		alias T Box;
-	}
+	static if(is(T == class) || is(T == interface)) alias T Box;
 	else static if(is(T == struct) || isScalarType!T)
 	{
 		class Box
 		{
 			T _t; alias _t this;
 			static if(is(T == struct))
-				this(A...)(A a) { _t = T(a); } 
-			else
-				this(T t = 0) { _t = t; }
+			this(A...)(A a) { _t = T(a); } 
+			else this(T t = 0) { _t = t; }
 		}
 	}
-	else
-		static assert(0, T.stringof~" is not a boxable type");
+	else static assert(0, T.stringof~" can't be boxed");
 }
 
-//This is prepended to referenced objects
-struct Header
+private struct Header(string C = "")
 {
-	ushort refs = 0; //references
-	ushort wefs = 0; //weak references
+	ushort strongCount = 0;
+	ushort weakCount = 0;
 	version(assert)
 	{
-		ushort pefs = 0; //pointer references
+		ushort pointerCount = 0;
 		ushort padding; //make CAS happy (needs 8, 16, 32 or 64 bits)
 	}
+
+	//Convenience alias to a reference's count.
+	static if(C == "R") alias strongCount count;
+	static if(C == "W") alias weakCount count;
+	static if(C == "P") version(assert) alias pointerCount count;
 }
 
 /**
  * Allocates and constructs a reference counted object.
  */
-R!T New(T, Args...)(Args args)
-if(is(T == class) || is(T == struct) || isScalarType!T)
+public R!T New(T, Args...)(Args args)
+	if(is(T == class) || is(T == struct) || isScalarType!T)
 {
 	enum size = __traits(classInstanceSize, Box!T);
-
+	
 	//Allocate space for the header + object
-	void* m = malloc(Header.sizeof + size);
+	void* m = malloc(Header!().sizeof + size);
 	if(!m) onOutOfMemoryError;
 	scope(failure) core.stdc.stdlib.free(m);
 	
-	void* o = m + Header.sizeof;
+	void* o = m + Header!().sizeof;
 	
 	//Got anything the GC needs to worry about?
 	static if(hasGarbage!T)
@@ -157,12 +171,12 @@ if(is(T == class) || is(T == struct) || isScalarType!T)
 	}
 	
 	//Initialise header
-	*cast(Header*)m = Header.init;
+	*cast(Header!()*)m = Header!().init;
 
 	//Construct with emplace
 	R!T result;
 	result._referent = emplace!(Box!T)(o[0..size], args);
-	result.header.refs = 1;
+	result.header.strongCount = 1;
 	return result;
 }
 
@@ -177,240 +191,7 @@ if(is(T == class) || is(T == struct) || isScalarType!T)
  * reference is aliased so the struct can be used as if 
  * it were the reference.
  */
-struct R(T)
-if(is(T == class) || is(T == interface) ||
-   is(T == struct) || isScalarType!T)
-{private:
-	alias Box!T B;
-
-	//The referent. _void gives convenient access.
-	union { public B _referent = null; void* _void; }
-
-	//The header.
-	ref shared(Header) header()
-	{ return *((cast(shared(Header)*)_void) - 1); }
-
-	//Reference counting semantics.
-	void _incref()
-	{
-		if(_referent) atomicOp!"+="(header.refs, 1);
-	}
-
-	void _decref()
-	{
-		/* Let us discuss lockless weak references
-		 * 
-		 * There are three rules:
-		 * - The object is destructed when refs reach 0.
-		 * - The memory is freed when refs and wefs reach 0.
-		 * - Must be destructed and freed once, in that order.
-		 * 
-		 * Decref:
-		 * If no more refs, dtor and set refs max.
-		 * If no more refs OR wefs, do as above, then 
-		 * decwef. If wefs max, free.
-		 * 
-		 * Decwef:
-		 * If no more wefs, and refs max,
-		 * decwef. If wefs max, free.
-		 * 
-		 * You are not expected to understand this.
-		 * Or its implementation.
-		 * I sure don't.
-		 */
-
-		if(_referent)
-		{
-			//Do a CAS, locking on the entire header
-			Header get, set;
-
-			do
-			{
-				get = set = atomicLoad(header);
-				set.refs -= 1;
-			}
-			while(!cas(&header(), get, set));
-
-			//If no more refs, dtor and set refs max.
-			if(set.refs == 0)
-			{
-				_dtor;
-				scope(exit) //the memory must be freed, come what may
-				{
-					atomicStore(header.refs, ushort.max); //Mark dtor complete
-
-					//If no more wefs, decwef. If wefs max, free.
-					if(atomicLoad(header.wefs) == 0 &&
-					atomicOp!"-="(header.wefs, 1) == ushort.max)
-						_free;
-				}
-			}
-		}
-	}
-	
-public:
-	alias _referent this;
-
-	/**
-	 * Promote to a strong reference from a raw pointer.
-	 * The pointer is trusted to point at valid header'd
-	 * memory for the duration.
-	 * 
-	 * A weak reference fulfills that trust.
-	 * A pointer reference often does not (don't risk it).
-	 */
-	this(B that)
-	{
-		if(that)
-		{
-			_referent = that;
-
-			bool acquire;
-			Header get, set;
-			do
-			{
-				acquire = true;
-				get = set = atomicLoad(header);
-
-				//If refs are 0 or max, do not acquire.
-				//(destruction in progress or complete)
-				if(set.refs == ushort.max || set.refs == 0)
-					acquire = false;
-				//Otherwise, incref.
-				else
-					set.refs += 1;
-			}
-			while(!cas(&header(), get, set));
-
-			if(!acquire) _referent = null;
-		}
-	}
-	this(this) { _incref; }
-	~this() { _decref; }
-
-	void opAssign(A:T)(R!A rhs) { swap(_referent, rhs._referent); }
-	void opAssign(A:T)(W!A rhs) { this = R!A(rhs._referent); }
-	void opAssign(typeof(null) wut) { _decref; _referent = null; }
-
-	A opCast(A)() const if(isReference!A)
-	{ return A(cast(A.B)_referent); }
-	
-	A opCast(A)() const if(!isReference!A)
-	{ return cast(A)_referent; }
-
-private:
-	void _dtor()
-	{
-		void* o = _void;
-		
-		//alias this makes it mildly impossible to call B.~this
-		//FIXME Likely to explode if an encapsulated T uses alias this
-		static if(is(T == struct))
-		{
-			destroy(_referent._t);
-		}
-		else static if(is(T == class) || is(T == interface))
-		{
-			destroy(_referent);
-		}
-		//numeric types don't need destruction
-		
-		//Reestablish referent (destroy() assigns null)
-		_void = o;
-		
-		assert(header.pefs == 0);
-	}
-
-	void _free()
-	{
-		static if(hasGarbage!T) GC.removeRange(_void);
-		core.stdc.stdlib.free(_void - Header.sizeof);
-	}
-}
-
-version(unittest)
-{
-	import std.stdio;
-	int printfNope(in char* fmt, ...) { return 0; }
-	alias printfNope log;
-	//alias printf log;
-
-	class C4 { C5 c5; this(int x) { log("C4\n"); } ~this() { log("~C4\n"); } }
-
-	struct S5 { R!C4 c4; R!C5 c5; int foo;
-		this(int foo) { this.foo = foo; log("S5\n"); } ~this() { log("~S5\n"); }
-		this(this) { assert(0, "Boxed S5 struct copy"); } }
-
-	class C5 { R!S5 s5; R!C4 c4;
-		this(R!C4 c4, R!S5 s5) { this.c4 = c4; this.s5 = s5; log("C5\n"); }
-		~this() { log("~C5\n"); }}
-
-	unittest
-	{
-		static assert(hasGarbage!C4);
-		static assert(!hasGarbage!C5);
-		static assert(hasIndirections!C5);
-		static assert(!hasGarbage!S5);
-		static assert(hasIndirections!S5);
-		
-		R!S5 s5;
-		s5 = New!S5(3);
-		
-		//up-periscope!
-		{
-			R!C5 c5 = New!C5(New!C4(4), New!S5(4));
-			s5 = c5.s5;
-		}
-		//dive, dive, dive!
-	}
-}
-
-
-
-//Test inheritance
-version(unittest)
-{
-	class Animal
-	{
-		this() { log("new animal\n") ;}
-		~this() { log("dead animal\n") ;}
-		abstract void bite();
-	}
-	
-	class Dog : Animal
-	{
-		this() { log("new dog\n");}
-		~this() { log("dead dog\n"); }
-		override void bite() { }
-	}
-	
-	class Cat : Animal
-	{
-		this() { log("new cat\n"); }
-		~this() { log("dead cat\n"); }
-		override void bite() { log("cat bite\n") ;}
-	}
-	
-	void poke(R!Animal animal)
-	{
-		animal.bite();
-	}
-}
-
-unittest
-{
-	R!Animal a = New!Dog();
-	
-	R!Dog d = cast(R!Dog)a;
-	assert(d != null);
-	R!Cat c = cast(R!Cat)a;
-	assert(c == null);
-	assert(cast(R!Cat)a == null);
-
-	//Cannot implicitly downcast, requires language support.
-	//poke(d);
-	poke(cast(R!Animal)d);
-}
+public alias Reference!"R" R;
 
 /**
  * A weak reference.
@@ -418,6 +199,7 @@ unittest
  * Weak references do not keep objects alive and
  * so help describe ownership. They also break
  * reference cycles that lead to memory leaks.
+ * (..Except they don't, yet.)
  * 
  * Weak references are like pointers, except they 
  * do not need to be nullified manually, they can 
@@ -427,73 +209,12 @@ unittest
  * That said, don't use a weak reference if a
  * pointer reference will do. They impose a 
  * performance penalty.
+ * 
+ * When you use a weak reference, it is promoted
+ * automatically on each access. Better to assign 
+ * it to a strong reference, then access that.
  */
-struct W(T)
-if(is(T == class) || is(T == interface) ||
-   is(T == struct)|| isScalarType!T)
-{private:
-	alias Box!T B; union { public B _referent = null; void* _void; }
-
-	ref shared(Header) header()
-	{ return *((cast(shared(Header)*)_void) - 1); }
-
-	void _incwef() { if(_referent) atomicOp!"+="(header.wefs, 1); }
-	void _decwef()
-	{
-		if(_referent)
-		{
-			Header get, set;
-			
-			do
-			{
-				get = set = atomicLoad(header);
-				set.wefs -= 1;
-			}
-			while(!cas(&header(), get, set));
-
-			//If no more wefs
-			if(set.wefs == 0)
-			{
-				//If refs max, decwef. If wefs max, free.
-				if(atomicLoad(header.refs) == ushort.max &&
-				atomicOp!"-="(header.wefs, 1) == ushort.max)
-					_free;
-			}
-		}
-	}
-	
-public:
-	R!T _strongReferent() { return R!T(_referent); }
-	alias _strongReferent this;
-
-	this(B that) { _referent = that; _incwef; }
-	this(this) { _incwef; } 
-	~this() { _decwef; }
-
-	void opAssign(A:T)(W!A rhs) { swap(_referent, rhs._referent); }
-	void opAssign(A:T)(R!A rhs) { this = W!A(rhs); }
-	void opAssign(typeof(null) wut) { _decwef; _referent = null; }
-
-	void _free()
-	{
-		static if(hasGarbage!T) GC.removeRange(_void);
-		core.stdc.stdlib.free(_void - Header.sizeof);
-	}
-}
-
-unittest
-{
-	class WC1 {
-		this() { log("WC1()\n"); }
-		~this() { log("~WC1()\n"); } }
-
-	R!WC1 r = New!WC1();
-	W!WC1 w = r; assert(w != null);
-	R!WC1 rr = w; assert(rr != null);
-	r = null; assert(w != null); 
-	rr = null; assert(w == null);
-	r = w; assert(r == null);
-}
+public alias Reference!"W" W;
 
 /**
  * A pointer reference.
@@ -509,53 +230,358 @@ unittest
  * as efficient as their namesake, reducing the garbage 
  * collection footprint.
  */
-struct P(T)
-if(is(T == class) || is(T == interface) ||
-   is(T == struct)|| isScalarType!T)
-{private:
-	alias Box!T B; union { public B _referent = null; void* _void; }
+public alias Reference!"P" P;
 
-	ref shared(Header) header()
-	{ return *((cast(shared(Header)*)_void) - 1); }
+//This is a template that returns a template
+//I can honestly say it is necessary and useful
+private template Reference(string C)
+if(C == "R" || C == "W" || C == "P")
+{
+	struct Reference(T)
+	if(is(T == class) || is(T == interface) || is(T == struct) || isScalarType!T)
+	{ private:
+		alias Box!T B;
 
-	version(assert)
-	{
-		void _incpef() { if(_referent) atomicOp!"+="(header.pefs, 1); }
-		void _decpef() { if(_referent) atomicOp!"-="(header.pefs, 1); }
+		//Referent
+		union { public B _referent = null; void* _void; }
+
+		//Header
+		ref shared(Header!C) header()
+		{ return *((cast(shared(Header!C)*)_void) - 1); }
+
+	public:
+
+		//Make the reference behave like the referent
+		static if(C == "W")
+		{
+			//Automatically promote weak references
+			@property R!T _strengthen() { return R!T(_referent); }
+			alias _strengthen this;
+		}
+		else alias _referent this; 
+
+		//Incref/decref semantics
+		this(this) { _incref; }
+		~this() { _decref;  }
+
+		//Construct weak and pointer refs from a raw ref
+		static if(C != "R")
+			this(B that) { _referent = that; _incref; }
+
+		//Assign null
+		void opAssign(typeof(null) wut)
+		{
+			static if(C == "P") { version(assert) { _decref; _referent = null; } }
+			else { _decref; _referent = null; }
+		}
+
+		//Assign a reference of the same type
+		void opAssign(D, A:T)(D!A rhs) if(is(D == Reference!C))
+		{
+			swap(_referent, rhs.referent);
+		}
+
+		//Assign a reference of a different type
+		void opAssign(D, A:T)(D!A rhs)
+		if(isInstanceOf(D, Reference) && !is(D == Reference!C))
+		{
+			alias Reference!C RefC; //for some reason D dislikes (Reference!C)!A
+			this = RefC!A(rhs._referent); //can't really blame it
+		}
+
+		//Cast to a reference type
+		A opCast(A)() const
+		if(isInstanceOf!(R, A) || isInstanceOf!(W, A) || isInstanceOf!(P, A))
+		{
+			return A(cast(A.B)_referent);
+		}
+
+		//Cast to a non-reference type
+		A opCast(A)() const
+		if(!isInstanceOf!(R, A) && !isInstanceOf!(W, A) && !isInstanceOf!(P, A))
+		{
+			// ..I've no idea why D should dislike cast(bool)_referent, but it does.
+			static if(is(A == bool)) return _referent is null ? false : true;
+			else return cast(A)_referent;
+		}
+
+	private:
+
+		//Incref / decref
+		void _incref()
+		{
+			if(_referent) atomicOp!"+="(header.count, 1);
+		}
+		
+		void _decref()
+		{
+			/* Let us discuss lockless weak references
+			 * 
+			 * There are three rules:
+			 * - The object is destructed when refs reach 0.
+			 * - The memory is freed when refs and wefs reach 0.
+			 * - Must be destructed and freed once, in that order.
+			 * 
+			 * Decref:
+			 * If no more refs, dtor and set refs max.
+			 * If no more refs OR wefs, do as above, then 
+			 * decwef. If wefs max, free.
+			 * 
+			 * Decwef:
+			 * If no more wefs, and refs max,
+			 * decwef. If wefs max, free.
+			 * 
+			 * You are not expected to understand this.
+			 * Or its implementation.
+			 * I sure don't.
+			 */
+
+			if(_referent)
+			{
+				//CAS the whole header, we need atomicity
+				Header!C get, set;
+				
+				do {
+					get = set = atomicLoad(header);
+					set.count -= 1; }
+				while(!cas(&header(), get, set));
+
+				static if(C != "P")
+				{
+					if(set.count == 0)
+					{
+						static if(C == "R")
+						{
+							_dtor;
+							scope(exit) //the memory must be freed, come what may
+							{
+								atomicStore(header.count, ushort.max);
+
+								//If no more wefs, decwef. If wefs max, free.
+								if(atomicLoad(header.weakCount) == 0 &&
+								   atomicOp!"-="(header.weakCount, 1) == ushort.max)
+									_free;
+							}
+						}
+						static if(C == "W")
+						{
+							//If refs max, decwef. If wefs max, free.
+							if(atomicLoad(header.strongCount) == ushort.max &&
+							   atomicOp!"-="(header.weakCount, 1) == ushort.max)
+								_free;
+						}
+					}
+				}
+			}
+		}
+		
+		static if(C != "P")
+		{
+			void _free()
+			{
+				static if(__traits(compiles, FieldTypeTuple!T))
+				{ static if(hasGarbage!T) GC.removeRange(_void); }
+				else static assert(0, "Reference cycle!");
+
+				core.stdc.stdlib.free(_void - Header!().sizeof);
+			}
+		}
+
+		static if(C == "R")
+		{
+			/**
+			 * Promote to a strong reference from a raw pointer.
+			 * The pointer is trusted to point at valid header'd
+			 * memory for the duration. Intended for use with
+			 * the 'this' pointer, i.e. return R!MyClass(this).
+			 */
+			public this(B that)
+			{
+				if(that)
+				{
+					_referent = that;
+					
+					bool acquire;
+					Header!C get, set;
+
+					do {
+						acquire = true;
+						get = set = atomicLoad(header);
+
+						//If refs are 0 or max, do not acquire.
+						//(destruction in progress or complete)
+						if(set.count == ushort.max || set.count == 0)
+							acquire = false;
+						//Otherwise, incref.
+						else
+							set.count += 1;
+					}
+					while(!cas(&header(), get, set));
+
+					if(!acquire) _referent = null;
+				}
+			}
+
+			void _dtor()
+			{
+				void* o = _void;
+				
+				//alias this makes it mildly impossible to call B.~this
+				//FIXME Likely to explode if an encapsulated T uses alias this
+				static if(is(T == struct))
+				{
+					destroy(_referent._t);
+				}
+				else static if(is(T == class) || is(T == interface))
+				{
+					destroy(_referent);
+				}
+				//numeric types don't need destruction
+				
+				//Reestablish referent (destroy() assigns null)
+				_void = o;
+				
+				//assert(header.pointerCount == 0);
+			}
+		}
 	}
-	
-public:
-	alias _referent this;
-
-	version(assert)
-	{
-		this(B that) { _referent = that; _incpef; }
-		this(this) { _incpef; } 
-		~this() { _decpef; }
-	}
-	else
-		this(B that) { _referent = that; }
-
-	void opAssign(A:T)(P!A rhs) { swap(_referent, rhs._referent); }
-	void opAssign(A:T)(R!A rhs) { this = P!A(rhs); }
-	void opAssign(A:T)(W!A rhs) { this = P!A(rhs); }
-
-	void opAssign(typeof(null) wut) { version(assert) _decpef; _referent = null; }
-	
-	A opCast(A)() const if(isInstanceOf!(P, A)) { return A(cast(A.B)_referent); }
-	A opCast(A)() const if(!isInstanceOf!(P, A)) { return cast(A)_referent; }
 }
 
-unittest
+version(unittest)
 {
-	R!Cat cat = New!Cat();
-	P!Cat wcat = cat;
-	assert(cat.header.refs == 1);
-	assert(cat.header.pefs == 1);
-	wcat = null;
-	assert(cat.header.wefs == 0);
-	assert(wcat == null);
+	/* Of all the things that need to print stuff for
+	 * debugging purposes, reference counting is about
+	 * the neediest. */
+	import std.stdio;
+	int printfNope(in char* fmt, ...) { return 0; }
+	alias printfNope log;
+	//alias printf log;
 
-	//how am I supposed to assert that the cat died?
-	//this is dumb :c
+	struct RTest
+	{
+		class C1 { P!C3 c3; } //Change to R!C3 to get a reference cycle error
+		class C2 { R!C1 c1; }
+		class C3 { R!C2 c2; }
+	}
+
+	struct PTest
+	{
+		unittest
+		{
+			R!int r = New!int();
+			P!int p = r;
+			assert(r.header.strongCount == 1);
+			assert(r.header.pointerCount == 1);
+			p = null;
+			assert(r.header.pointerCount == 0);
+			assert(p is null);
+			assert(p == null);
+		}
+	}
+
+	struct WTest
+	{
+		class C1 {
+			int x;
+			this() { log("WC1()\n"); }
+			~this() { log("~WC1()\n"); } }
+		
+		unittest
+		{
+			R!C1 r = New!C1();
+			assert(r != null);
+			assert(r !is null);
+			assert(r);
+			assert(r.header.strongCount == 1);
+			assert(r.header.weakCount == 0);
+			assert(r.header.pointerCount == 0);
+			
+			W!C1 w = r;
+			assert(w != null);
+			assert(w !is null);
+			assert(w);
+			assert(r.header.strongCount == 1);
+			assert(r.header.weakCount == 1);
+			assert(r.header.pointerCount == 0);
+			
+			w.x = 1;
+			assert(r.x == 1);
+			r.x = w.x + w.x;
+			assert(w.x == 2);
+			assert(r.header.strongCount == 1);
+			assert(r.header.weakCount == 1);
+			assert(r.header.pointerCount == 0);
+			
+			R!C1 rr = w;
+			assert(rr);
+			assert(r.header.strongCount == 2);
+			assert(r.header.weakCount == 1);
+			assert(r.header.pointerCount == 0);
+			
+			r = null;
+			assert(r == null);
+			assert(r is null);
+			assert(r._referent is null);
+			assert(w);
+			assert(w.header.strongCount == 1);
+			assert(w.header.weakCount == 1);
+			assert(w.header.pointerCount == 0);
+			
+			rr = null;
+			assert(w == null);
+			assert(w is null);
+			assert(w._referent !is null);
+			assert(w.header.strongCount == ushort.max);
+			assert(w.header.weakCount == 1);
+			assert(w.header.pointerCount == 0);
+			
+			r = w;
+			assert(r is null);
+			assert(w.header.strongCount == ushort.max);
+			assert(w.header.weakCount == 1);
+			assert(w.header.pointerCount == 0);
+			
+			w = null;
+		}
+	}
+
+	struct RInheritanceTest
+	{
+		class Animal
+		{
+			this() { log("new animal\n") ;}
+			~this() { log("dead animal\n") ;}
+			abstract void bite();
+		}
+		
+		class Dog : Animal
+		{
+			this() { log("new dog\n");}
+			~this() { log("dead dog\n"); }
+			override void bite() { log("dog bite\n"); }
+		}
+		
+		class Cat : Animal
+		{
+			this() { log("new cat\n"); }
+			~this() { log("dead cat\n"); }
+			override void bite() { log("cat bite\n"); }
+		}
+		
+		static void poke(R!Animal animal)
+		{
+			animal.bite();
+		}
+
+		unittest
+		{
+			R!Animal a = New!Dog();
+			
+			R!Dog d = cast(R!Dog)a; assert(d);
+			R!Cat c = cast(R!Cat)a; assert(c == null);
+			assert(cast(R!Cat)a == null);
+			poke(cast(R!Animal)d);
+			//Cannot implicitly downcast, requires language support.
+		}
+	}
 }
