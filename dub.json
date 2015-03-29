@@ -1,5 +1,6 @@
 {
     "name": "raider-engine",
+    "version": "0.0.1",
     "description": "A small game engine in D.",
     "homepage": "https://github.com/Raiderium/RaiderEngine",
     "license": "MIT",
@@ -8,13 +9,14 @@
     "targetName": "RaiderEngine",
     "targetPath": "lib",
 
-    "versions": ["DerelictODE_DoublePrecision"],
-
     "dependencies": {
-        "raider-math": "~master",
-        "derelict-gl3": "~master",
-        "derelict-ode": "~master",
-        "derelict-physfs": "~master",
-        "derelict-sfml2": "~master",
+        "derelict-gl3": ">0.0.0",
+        "derelict-sfml2": ">0.0.0",
+	"raider-physics": ">0.0.0",
+	"raider-collision": ">0.0.0",
+	"raider-render": ">0.0.0",
+        "raider-math": ">0.0.0",
+	"raider-audio": ">0.0.0",
+	"raider-tools": ">0.0.0"
     }
 }
