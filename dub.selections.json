@@ -1,9 +1,9 @@
 {
 	"fileVersion": 1,
 	"versions": {
+		"raider-audio": "0.0.1",
 		"raider-collision": "0.0.1",
 		"raider-render": "0.0.1",
-		"raider-audio": "0.0.1",
 		"raider-tools": "0.0.1",
 		"derelict-util": "1.9.1",
 		"derelict-sfml2": "1.1.0",
