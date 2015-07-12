@@ -25,26 +25,15 @@ abstract class Factory
 	 * Returns a pointer reference to the entity.
 	 * (The layer holds ownership.)
 	 */
-	P!Entity create(P!Layer layer);
+	P!Entity create(Layer layer);
 	
 	template boilerplate(E)
 	{
 		private enum entity_name = E.stringof;
 		private enum factory_name = entity_name~"Factory";
-		
 		enum boilerplate = "
-		static assert(
-			typeof(this).stringof == \""~factory_name~"\",
-			\"entity "~entity_name~" needs a factory called "~factory_name~".\");
-
-		override string name()
-		{
-			return \""~entity_name~"\";
-		}
-		
-		override P!Entity create(Layer layer)
-		{
-			return P!Entity(New!"~entity_name~"(layer, R!Factory(this))); 
-		}";	
+		static assert( typeof(this).stringof == \""~factory_name~"\", \"entity "~entity_name~" needs a factory called "~factory_name~".\");
+		override string name() { return \""~entity_name~"\"; }
+		override P!Entity create(Layer layer) { return P!Entity(New!"~entity_name~"(layer, R!Factory(this))); }";	
 	}
 }

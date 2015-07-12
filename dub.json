@@ -9,8 +9,6 @@
     "targetPath": "lib",
 
     "dependencies": {
-        "derelict-gl3": ">0.0.0",
-        "derelict-sfml2": ">0.0.0",
         "raider-audio": ">0.0.0",
         "raider-collision": ">0.0.0",
         "raider-math": ">0.0.0",

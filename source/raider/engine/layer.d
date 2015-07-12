@@ -2,7 +2,7 @@
 
 import raider.engine.entity;
 import raider.engine.game;
-import raider.physics.world;
+import raider.engine.physics;
 import raider.render.model;
 import raider.render.camera;
 import raider.render.light;
@@ -22,8 +22,8 @@ class Layer
 	R!World _world;
 	int _z; ///Graphical depth. Layers draw in ascending order.
 
-	Array!Plug plugs;
-	Array!Plug addBuffer;
+	Array!EntityProxy entities; //
+	Array!EntityProxy creche; //Newly created entities live here, briefly.
 
 public:
 	@property P!Game game() { return _game; }
@@ -43,7 +43,7 @@ public:
 	{
 		assert(_game.layers.contains(P!Layer(this)));
 
-		plugs.clear;
+		entities.clear;
 
 		_game.layers.removeItem(P!Layer(this));
 	}

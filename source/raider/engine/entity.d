@@ -1,6 +1,7 @@
 module raider.engine.entity;
 
 import std.bitmanip;
+import core.atomic : atomicOp;
 import raider.engine.factory;
 import raider.engine.game;
 import raider.engine.layer;
@@ -31,7 +32,7 @@ abstract class Entity
 	Array!(P!Entity) dependers;
 	P!Layer _layer;
 	R!Factory _factory;
-	Plug* _plug; //Valid for this entity during step phase.
+	EntityProxy* _proxy; //Valid for this entity during step phase.
 
 public:
 
@@ -43,7 +44,7 @@ public:
 	 */
 	void depend(Entity other)
 	{
-		dependencies++;
+		atomicOp!"+="(dependencies, 1);
 		assert(dependencies != 0);
 
 		//FIXME Dependers list needs lock-free add().
@@ -57,8 +58,8 @@ public:
 	 */
 	void destroy()
 	{
-		assert(_plug !is null);
-		_plug.alive = false;
+		assert(_proxy !is null);
+		_proxy.alive = false;
 	}
 
 	@property P!Layer layer() { return _layer; }
@@ -70,8 +71,10 @@ public:
 		_layer = P!Layer(layer);
 		_factory = factory;
 
-		Plug plug = {R!Entity(this), flags:phaseFlags};
-		_layer.plugs.add(plug);
+		EntityProxy ep; //Lesson learnt: do NOT use = { R!Entity(this), flags:phaseFlags };
+		ep.flags = phaseFlags; //Struct initialisers don't copy the reference properly
+		ep.e = R!Entity(this);
+		_layer.entities.add(ep);
 	}
 
 	mixin template boilerplate()
@@ -90,7 +93,9 @@ public:
 			      hasLook<<0 | 
 			      hasStep<<1 | 
 			      hasDraw<<2 | 
-			      hasStep<<5 ); //To init dependency cycle detection
+								//parity
+			            1<<4 |  //alive
+			      hasStep<<5 ); //stepped
 
 			static if(__traits(compiles, init())) init();
 		}
@@ -106,8 +111,7 @@ public:
 	 * unaware of time passing.
 	 * 
 	 * Use depend() in this phase to require other entities to 
-	 * step() before this one, allowing read access to updated 
-	 * information.
+	 * step() before this one, allowing to read updated state.
 	 * 
 	 */
 	void look();
@@ -117,9 +121,9 @@ public:
 	 * 
 	 * During this phase, the entity may write to public members
 	 * and read from dependencies. It should step through time 
-	 * by dt seconds. This is the place to spawn entities, play 
-	 * sounds, move models, advance animation timers, destroy, 
-	 * apply forces, etc.
+	 * by dt seconds. This is the place to spawn or destroy 
+	 * entities, play sounds, adjust models, advance animations,
+	 * apply forces, set positions, etc.
 	 * 
 	 * Applying forces to other bodies is a little different,
 	 * apparently. What.. what does this mean, hm? Should
@@ -160,15 +164,23 @@ public:
 /**
  * Entity reference and flags.
  * 
- * Every entity has flags that help the main loop do it's job.
- * These would be stored in the class, but most of them flag
- * situations where a dereference is avoidable. So we store 
- * them next to the reference, in the layer's entity list. 
+ * Every entity has flags used in the main loop.
+ * These would be stored on the entity object, but they
+ * often flag situations where a dereference is avoidable. 
+ * So we store them next to the reference instead,
+ * allowing the loop to run faster.
+ * 
+ * This is beneficial because resolving entity dependencies 
+ * requires repeated iterations with a lot of no-ops.
+ * 
+ * It unfortunately introduces a confusing situation where 
+ * layer.entities is actually a list of proxy structs, 
+ * not direct Entity references. *shrug* :I
  */
-package struct Plug
+package struct EntityProxy
 {
 	R!Entity e;
-	
+
 	union
 	{
 		ubyte flags = 0;
@@ -184,6 +196,9 @@ package struct Plug
 	}
 }
 
+
+
+
 /* Let's talk briefly about game objects.
  * 
  * There is a pattern in engine design where
@@ -197,11 +212,11 @@ package struct Plug
  * 
  * This is also hamfisted and wasteful. It adds
  * busywork for the game developer, revoking 
- * their object-oriented coding rights in an 
+ * their object-oriented design tools in an 
  * object-oriented language, requiring multiple 
- * GameObjects per actual game construct, at
- * best resulting in a functional but graceless
- * pile of spaghetti code.
+ * GameObjects per actual game object, resulting
+ * at best in a functional but graceless pile of 
+ * spaghetti code.
  * 
  * Long story short, I don't like this pattern.
  * 

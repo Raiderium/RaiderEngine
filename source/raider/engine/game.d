@@ -9,8 +9,7 @@ import raider.engine.entity;
 import raider.engine.register;
 import raider.tools.array;
 import raider.tools.looper;
-import raider.tools.reference;
-
+import raider.tools.reference; 
 /**
  * A container for all that is.
  * 
@@ -28,114 +27,117 @@ public:
 	R!Window window;
 	R!Looper looper;
 
+	uint INIT_WIDTH = 800;
+	uint INIT_HEIGHT = 640;
+	string INIT_ENTITY = "main.Main";
+
 	this()
 	{
-		window = New!Window(800, 640);
-		looper = New!Looper();
 		main_layer = New!Layer(this);
-		register["Main"].create(cast(P!Layer)main_layer);
+		register = New!Register();
+		looper = New!Looper();
 	}
 
 	~this()
 	{
-		//main_layer.~this() triggers a cascade of destruction
+		//for an empty function, a lot happens here..
+		//main_layer dtor triggers a cascade of destruction
 	}
 
 	void run()
 	{
-		looper.start();
+		window = New!Window(INIT_WIDTH, INIT_HEIGHT);
+		register[INIT_ENTITY].create(main_layer);
 
+		looper.start();
 		while(looper.running)
 		{
 			while(looper.step) step(looper.stepSize);
-
 			draw;
 			looper.sleep;
 		}
+	}
+
+	void stop()
+	{
+		looper.stop;
 	}
 	
 	void step(double dt)
 	{
 		window.processEvents;
 
-		//Physics phase
+		//Physics
 		foreach(layer; layers) layer.world.step(dt);
 
+		//##########
 		//Look phase
-		foreach(layer; layers)
+		//##########
+		foreach(layer; layers) foreach(ref entity; layer.entities)
 		{
-			foreach(plug; layer.plugs)
+			if(entity.hasLook) entity.e.look;
+			if(entity.hasStep)
 			{
-				if(plug.hasLook) plug.e.look;
-
-				if(plug.hasStep)
-				{
-					assert(plug.stepped, "Dependency cycle detected.");
-					plug.stepped = false;
-				}
+				assert(entity.stepped, "Dependency cycle detected.");
+				entity.stepped = false;
 			}
 		}
 
+		//##########
 		//Step phase
-		uint steps = 0xD15EA5E;
+		//##########
+		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL;
+
 		while(steps)
 		{
 			steps = 0;
-
-			//For all entities (this iteration can be parallel)
-			foreach(layer; layers)
+			foreach(layer; layers) foreach(ref entity; layer.entities) //TODO Parallelify
 			{
-				foreach(plug; layer.plugs)
+				if(entity.hasStep)
 				{
-					if(plug.hasStep)
+					if(!entity.stepped && entity.e.dependencies == 0)
 					{
-						//If not stepped..
-						if(!plug.stepped)
-						{
-							//If there are no remaining dependencies..
-							if(plug.e.dependencies == 0)
-							{
-								//Step.
-								plug.e._plug = &plug;
-								plug.e.step(dt);
-								steps++;
-								plug.stepped = true;
+						entity.e._proxy = &entity; //Give entity access to its proxy
+						entity.e.step(dt); //Step!
+						entity.stepped = true;
+						atomicOp!"+="(steps, 1);
 
-								//Mark dependers.
-								foreach(depender; plug.e.dependers)
-								{ ushort e = atomicOp!"-="(depender.dependencies, 1);
-									
-									assert(e != ushort.max, "Dependency count underflow.");
-								}
-							}
+						//Inform dependent entities
+						foreach(depender; entity.e.dependers)
+						{
+							ushort e = atomicOp!"-="(depender.dependencies, 1);
+							assert(e != ushort.max, "Dependency count underflow.");
 						}
 					}
-					else
-					{
-						assert(plug.e.dependers.length == 0, "Cannot depend on an entity with no step phase.");
-						assert(plug.e.dependencies == 0, "An entity with no step phase cannot depend on others.");
-					}
+				}
+				else
+				{
+					assert(entity.e.dependers.length == 0, "Cannot depend on an entity with no step phase.");
+					assert(entity.e.dependencies == 0, "An entity with no step phase cannot depend on others.");
 				}
 			}
 		}
 
-		//Delete phase
 		foreach(layer; layers)
 		{
-			//Compact the dead at the end of the array
-			uint prune = layer.plugs.length;
-			
-			for(uint x = layer.plugs.length; x >= 0; x--)
+			auto e = layer.entities.ptr;
+			uint s = layer.entities.length-1;
+
+			//Move dead entities to the end of the array
+			for(uint x = s; x != uint.max; x--)
 			{
-				if(!layer.plugs[x].alive)
+				if(!e[x].alive)
 				{
-					prune--;
-					swap(layer.plugs[x], layer.plugs[prune]);
+					swap(e[x], e[s]); 
+					s--;
 				}
 			}
 
-			//Remove them
-			layer.plugs.resize(prune);
+			//Delete them
+			if(s == uint.max || e[s].alive) s++;
+			layer.entities.resize(s);
+
+			//TODO Append new entities from the creche
 		}
 
 		//TODO Basic model LOD (sets active level for pose phase, renders different mesh)
@@ -143,6 +145,9 @@ public:
 
 	void draw()
 	{
+		//##########
+		//Draw phase
+		//##########
 		window.bind;
 
 		double nt = looper.frameTime;
@@ -152,7 +157,6 @@ public:
 			if(cable.camera)
 			{
 				window.viewport = cable.viewport;
-
 			}
 		}
 
@@ -170,4 +174,38 @@ public:
  */
 private final class GameThread
 {
+
+}
+
+version(unittest)
+{
+	import raider.engine.all;
+	import std.stdio;
+
+	final class Thing : Entity
+	{ mixin Entity.boilerplate;
+
+		void init()
+		{
+			writeln(factory.name~".init");
+		}
+
+		override void step(double dt)
+		{
+			writeln(factory.name~".step");
+			game.stop;
+		}
+	}
+	
+	final class ThingFactory : Factory
+	{ mixin(Factory.boilerplate!Thing);
+		
+	}
+}
+
+unittest
+{
+	R!Game game = New!Game();
+	game.INIT_ENTITY = "raider.engine.game.Thing";
+	game.run;
 }

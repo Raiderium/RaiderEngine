@@ -1,4 +1,4 @@
-﻿module raider.engine.framework.cable;
+﻿module raider.engine.cable;
 
 import raider.math.all;
 import raider.engine.layer;
@@ -19,7 +19,7 @@ import raider.tools.reference;
  * Note that currently there is only one window per game, which is 
  * automatically used as the destination for all cables. In future 
  * there may be multiple windows, but there are a few technical 
- * concerns in the way. Namely, vsync.
+ * concerns in the way. Namely, multi-window vsync.
  */
 final class Cable
 {package:
