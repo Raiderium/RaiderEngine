@@ -1,6 +1,6 @@
 ﻿module raider.engine.cable;
 
-import raider.math.all;
+import raider.math;
 import raider.engine.layer;
 import raider.render.camera;
 import raider.tools.reference;

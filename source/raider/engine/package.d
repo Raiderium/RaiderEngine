@@ -1,4 +1,4 @@
-module raider.engine.all;
+module raider.engine;
 
 public
 {
@@ -10,9 +10,9 @@ public
 	import raider.engine.physics;
 	import raider.engine.register;
 
-	import raider.audio.all;
-	import raider.collision.all;
-	import raider.math.all;
-	import raider.render.all;
-	import raider.tools.all;
+	import raider.audio;
+	import raider.collision;
+	import raider.math;
+	import raider.render;
+	import raider.tools;
 }
