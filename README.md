@@ -1,42 +1,63 @@
 #RaiderEngine
 
 
-A 3D game engine. Incomplete.
+This is a 3D game engine written from scratch in D. It tries to be small, fast and as simple as possible, but not simpler.
 
-##Graphics
-- OpenGL 1.1 and up
-- Graceful fallback to fixed function
-- Pixel and vertex shaders
-- Closest light detection and sorting
-- Bezier animation curves
-- Armatures with IK and nonlinear mixing
-- Shape keys
-- Deformation controlled by programmer
-- True motion blur / depth of field
-- Full support for total ignorance of OpenGL
+It is not complete. The following describes the minimum featureset required for a 1.0 release.
 
-##Mechanics
-- Soft-constraint rigidbody physics
-- 3D sound with HDR ducking, travel delay, effect regions
-- Object-oriented entity framework
-- (A)synchronous (de)serialisation system
-- Blender content exporters
-- Multiplatform
-- Tiny
+##Features
+- OpenGL 1.3 and up with graceful fallback to fixed function
+- Dynamic lighting with light probes and soft shadows
+- Baked lighting with translucent radiosity
+- Bezier f-curves, armatures, shape keys, soft bodies, IK and non-linear mixing
+- Mesh tools: cuts, booleans, mirrors, subdivision, bevel, extrusion, deformations
+- Multiple pass anti-aliasing, motion blur and depth of field
+- Explosion- and singularity-resistant soft-constraint rigidbody and softbody dynamics
+- Discrete MPR collision with measures against tunnelling and constraint violation
+- 3D sound with dynamic envelopes, propagation delay, effect regions
+- Object-oriented entity framework (not ECS)
+- Blender asset exporters, stupidly fast native binary formats
+- (A)synchronous filing and networking
+- Cache-friendly with aggressive parallel execution strategies
 
 
-##Rationale
+##Platforms
+- Windows, Linux, (Mac?)
+- x86, x86-64, (armhf?) 
 
-This is a minimal engine written from scratch. Its goal is to push skillful artifice in software rather than brute force in hardware. The API is kept as simple, shallow and intuitive as possible. Tasks are often performed in software to improve flexibility, not for lack of available hardware. 
 
-The engine omits a scripting language. D compiles very quickly and adheres to standards, making client-side compilation feasible. If all engine objects are rolled into one linkable, and a subset of the toolchain is bundled, a portable and rapid build cycle may be possible, allowing script-like features without a crippling performance loss and terrifying complexity gain.
+##Differences
+###One language
+It omits a scripting language. D is friendly and compiles fast, reducing the key advantages of scripting. We lose the ability to interpret code at runtime, but this is fairly dangerous and rarely used. If necessity compels, visual logic graphs are a safe and performant alternative, and even friendlier than scripts. 
 
-Not counting the GPU, all processor cores should be more saturated than not before bottlenecks appear. The main loop makes a special effort to be pleasingly parallel, or at least agreeably concurrent, without taking power from the developer or making excessive demands on their skills with regards to shared memory.
+Without scripts, we avoid their typical disadvantages: a crippling drop in performance, a terrifying increase in overall complexity, and poor exception handling. Script interpreters also rarely run on multiple threads, for who would use that feature? When the woodcutter complains of a dull axe, we don't give them two dull axes.
 
-This has implications for the API. Every effort is being made to provide a simple interface, but it is still mid-level, and the dev will at times need to follow rules not enforced by the language. The code they write will share memory, which involves some simple (but easily forgotten) rules. Not for beginners.
 
-The engine optimises on the assumption that every scene will be as demanding as it could possibly be at all times, and the lowest framerate encountered is the only framerate that matters. Conditional optimisations are often ignored, since most developers aren't even aware of them, much less able to ensure their criteria are met. They disguise the true complexity ceiling, leading to a final product with unexpected framerate drops. Temporal coherency is valued on a case-by-case basis.
+###Parallel strategy
+The main loop makes a special effort to be embarassingly parallel, or at worst distressingly concurrent, without taking power from the developer or making excessive demands on their skills with regards to shared memory. All logical cores should be more saturated than not before bottlenecks appear.
 
-The physics broadphase demonstrates - it assumes objects are always in motion. It sees no theoretical difference between a thousand balls at rest and a thousand balls bouncing around at great speed. This assumption results in a rather naive-looking architecture that greatly reduces performance in the former case, but slightly improves it in the latter case. Some people might not appreciate this design philosophy, and that's fine. It only benefits a certain flavour of game.
+It is common to avoid exposing shared memory to the developer, only using threads behind the scenes. An engine can update certain component lists in parallel when it knows they will not cause trouble. With double buffered state, it can process multiple frames at the same time. Normally sequential tasks like physics, logic and rendering can be pipelined. These strategies suffer from (primarily) limited scaleability, wasted memory, and input latency, respectively. 
 
-(Note that rigidbody sleepers are considered a viable optimisation since the average developer can reason about and guarantee their presence. However, they are implemented outside the broadphase algorithm.)
+But their use is understandable in established engines where large architectural changes are difficult. Features need to slot in gradually, and multi-core processors have only been around for - .. oh. Well, er, trying to leverage threads is hard enough in most systems languages, and even harder to present to the end-developer, in an environment originally designed to avoid the need for it. 
+
+This engine's strategy is to use parallel algorithms as much as possible from the ground up. It likes to completely finish each task before starting the next. This does mean that the CPU and GPU tend to have downtime as they process exclusive loads, but there are ways to blur that line and increase utilisation without pipelining. We're not rendering a movie here, despite the industry suggesting otherwise.
+
+
+###Pragmatic interface
+Every effort is being made to provide a simple interface, but it's not for beginners. Developers will infrequently write code that shares memory, which requires following some simple rules. Not difficult, but not suited to teaching newcomers programming in D or game development unless it's combined with some dynamite tutorials and a crash-course on synchronisation primitives.
+
+
+###Small
+No bloat, no duplicated functionality, no built-in store with microtransactions (expardon me?), no unstripped symbols. Its release footprint with UPX compression will likely be under 500kb. In addition, it encourages creating assets from reduced data. A variety of tools will be available to generate and manipulate meshes, textures and audio.
+
+
+###Fast
+Much of this engine's advantage is not in what it does, but what it avoids doing, and how it avoids doing it. For instance, it avoids hash tables and linked lists. There are no tasks in a game engine for which they are the only viable solution, and they're inherently complex before you even start solving the problem at hand. 
+
+Conditional optimisations are often ignored if most developers aren't even aware of them, much less able to ensure their criteria are met, leading to unexpected framerate drops. Temporal coherency is valued on a case-by-case basis. Always remember, O(n) is only wrong until it runs faster in practice.
+
+Structures are generally flat and in contiguous arrays. Algorithms are written for correct meaning first, good (typically meaning cache-friendly) pattern choice second, and micro-optimisations last, with snarky self-deprecating comments to make them obvious. Allocations are currently through malloc, but the std.experimental.allocator system will be injected later to control memory layout and use appropriate allocation strategies without writing special-case code.
+
+
+###Simple
+Or, as complex as it needs to be, and no more. The codebase is flat and 95% of class names are a single plain english word or abbreviation. Different aspects of the engine (physics, audio, rendering, math etc) are in separate, well-partitioned libraries that can also be used on their own.
