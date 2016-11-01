@@ -1,7 +1,7 @@
 {
     "name": "raider-engine",
-    "version": "0.0.1",
-    "description": "A small game engine in D.",
+    "version": "0.0.2",
+    "description": "A small game engine.",
     "homepage": "https://github.com/Raiderium/RaiderEngine",
     "license": "MIT",
     "authors": ["Aiden Sibley"],

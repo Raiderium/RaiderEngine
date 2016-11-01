@@ -1,39 +1,28 @@
 ﻿module raider.engine.factory;
 
-import core.sync.mutex;
-import raider.engine.entity;
 import raider.engine.game;
-import raider.engine.layer;
-import raider.render.camera;
-import raider.tools.array;
-import raider.tools.map;
+import raider.engine.entity;
 import raider.tools.reference;
 
 /**
- * Shared entity data.
+ * Shared entity data and instancing method.
  * 
  * Every entity has an associated factory.
  * An instance of the factory is injected into the entity on spawn.
+ * It isn't guaranteed to be the same instance for all instances
+ * of an entity type, but in practice it will be.
  */
 abstract class Factory
 {public:
-	@property string name();
+
+	/**
+	 * The name of the entity this factory creates.
+	 */
+	@property string entityName() const;
+	@property string fullyQualifiedEntityName();
 	
 	/**
-	 * Instance an entity in the specified layer.
-	 * 
-	 * Returns a pointer reference to the entity.
-	 * (The layer holds ownership.)
+	 * Instance an entity.
 	 */
-	P!Entity create(Layer layer);
-	
-	template boilerplate(E)
-	{
-		private enum entity_name = E.stringof;
-		private enum factory_name = entity_name~"Factory";
-		enum boilerplate = "
-		static assert( typeof(this).stringof == \""~factory_name~"\", \"entity "~entity_name~" needs a factory called "~factory_name~".\");
-		override string name() { return \""~entity_name~"\"; }
-		override P!Entity create(Layer layer) { return P!Entity(New!"~entity_name~"(layer, R!Factory(this))); }";	
-	}
+	P!Entity create(P!Game game, P!Entity parent = null, P!Entity creator = null);
 }

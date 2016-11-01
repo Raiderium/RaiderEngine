@@ -1,211 +1,208 @@
 module raider.engine.game;
 
 import core.atomic;
-import raider.render.gl;
-import raider.render.window;
-import raider.engine.cable;
-import raider.engine.layer;
+import std.algorithm : swap;
+import std.conv;
 import raider.engine.entity;
 import raider.engine.register;
-import raider.tools.array;
-import raider.tools.looper;
-import raider.tools.reference; 
+import raider.render;
+import raider.math;
+import raider.tools; 
 /**
  * A container for all that is.
- * 
- * Oddly enough, if you're trying to make a game, you
- * don't start here. Go make some Entity subclasses.
  */
 final class Game
 {package:
-	Array!(P!Layer) layers;
-	Array!(P!Cable) cables;
-	R!Layer main_layer; //The initial layer
-	R!Register register;
+	R!Register factories;
+	R!(Bag!(P!Entity)) dependencies;
+	Array!EntityProxy creche; //Newly created entities live here, briefly.
+	Array!EntityProxy entities;
+	Phase _phase; //Current phase of the game loop
+	P!Entity main;
 
 public:
-	R!Window window;
-	R!Looper looper;
 
-	uint INIT_WIDTH = 800;
-	uint INIT_HEIGHT = 640;
-	string INIT_ENTITY = "main.Main";
+	@property Phase phase() { return _phase; }
+	R!Looper looper;
 
 	this()
 	{
-		main_layer = New!Layer(this);
-		register = New!Register();
+		_phase = Phase.None;
+		factories = New!Register();
+		dependencies = New!(Bag!(P!Entity))();
 		looper = New!Looper();
+		creche.cached = true;
+		entities.cached = true;
 	}
 
 	~this()
 	{
-		//for an empty function, a lot happens here..
-		//main_layer dtor triggers a cascade of destruction
+		//assert(phase == Phase.None, "Game destroyed in "~to!string(phase));
 	}
 
 	void run()
 	{
-		window = New!Window(INIT_WIDTH, INIT_HEIGHT);
-		register[INIT_ENTITY].create(main_layer);
-
-		looper.start();
-		while(looper.running)
+		looper.start;
+		while(true)
 		{
-			while(looper.step) step(looper.stepSize);
+			while(looper.step) step;
+			if(!looper.running) break;
 			draw;
+			_phase = Phase.None;
 			looper.sleep;
 		}
+
 	}
 
 	void stop()
 	{
-		looper.stop;
+		looper.running = false;
+		main._proxy.isAlive = false;
+		main = null;
 	}
 	
-	void step(double dt)
+	void step()
 	{
-		window.processEvents;
+		////////
+		//Look//
+		////////
+		_phase = Phase.MetaLook;
 
-		//Physics
-		foreach(layer; layers) layer.world.step(dt);
+		if(main) main.meta(phase);
 
-		//##########
-		//Look phase
-		//##########
-		foreach(layer; layers) foreach(ref entity; layer.entities)
-		{
-			if(entity.hasLook) entity.e.look;
-			if(entity.hasStep)
-			{
-				assert(entity.stepped, "Dependency cycle detected.");
-				entity.stepped = false;
-			}
-		}
+		dependencies.finish();
 
-		//##########
-		//Step phase
-		//##########
-		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL;
+		////////
+		//Step//
+		////////
+		_phase = Phase.Step;
+
+		if(!main) main = factories["Main"].create(P!Game(this));
+
+		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL; 
 
 		while(steps)
 		{
-			steps = 0;
-			foreach(layer; layers) foreach(ref entity; layer.entities) //TODO Parallelify
+			steps = 0; //Tracks number of entities updated; if it stays at 0, we've finished.
+			foreach(ref e; entities) //TODO Parallelify
 			{
-				if(entity.hasStep)
+				if(e.hasStep)
 				{
-					if(!entity.stepped && entity.e.dependencies == 0)
+					if(!e.stepped && e.e.dependees == 0)
 					{
-						entity.e._proxy = &entity; //Give entity access to its proxy
-						entity.e.step(dt); //Step!
-						entity.stepped = true;
+						e.e.step(nitf!double(e.dt)); //Step!
+						e.stepped = true;
 						atomicOp!"+="(steps, 1);
 
-						//Inform dependent entities
-						foreach(depender; entity.e.dependers)
+						//Inform dependers
+						foreach(depender; e.e.dependers)
 						{
-							ushort e = atomicOp!"-="(depender.dependencies, 1);
-							assert(e != ushort.max, "Dependency count underflow.");
+							ushort deps = atomicOp!"-="(depender.dependees, 1);
+							assert(deps != ushort.max, "Dependency count underflow.");
 						}
 					}
 				}
 				else
 				{
-					assert(entity.e.dependers.length == 0, "Cannot depend on an entity with no step phase.");
-					assert(entity.e.dependencies == 0, "An entity with no step phase cannot depend on others.");
+					assert(e.e.dependers[].length == 0, "Cannot depend on an entity with no step phase.");
+					assert(e.e.dependees == 0, "An entity with no step phase cannot depend on others.");
 				}
 			}
 		}
 
-		foreach(layer; layers)
+
+		////////
+		//Dtor//
+		////////
+		_phase = Phase.Dtor;
+
+		shared uint dtors = 0xBA1EE7ED;
+
+		while(dtors)
 		{
-			auto e = layer.entities.ptr;
-			uint s = layer.entities.length-1;
-
-			//Move dead entities to the end of the array
-			for(uint x = s; x != uint.max; x--)
+			dtors = 0;
+			foreach(ref e; entities) //Parallelify
 			{
-				if(!e[x].alive)
+				if(!e.isAlive && !e.destroyed)
 				{
-					swap(e[x], e[s]); 
-					s--;
+					if(e.hasDtor) e.e.dtor;
+					if(e.isParent) //Destroy children
+						foreach(ref child; &e.children) {
+							child.isAlive = false;
+							child.parent = null;
+						}
+					e.destroyed = true;
+					atomicOp!"+="(dtors, 1);
 				}
 			}
-
-			//Delete them
-			if(s == uint.max || e[s].alive) s++;
-			layer.entities.resize(s);
-
-			//TODO Append new entities from the creche
 		}
+
+		///////////
+		//Cleanup//
+		///////////
+		_phase = Phase.Cleanup;
+
+		//Add new entities from the creche..
+		auto n = entities.size;
+		creche.move(entities);
+
+		//..and update _proxy.
+		if(entities.moved) n = 0; //Reallocation occurred; update the entire array.
+		foreach(ref e; entities[n .. $]) e.e._proxy = &e;
+		entities.moved = false;
+
+		auto e = entities.ptr; //For convenience
+		uint s = entities.length-1;
+
+		//Move dead entities to the end of the array
+		for(uint x = s; x != uint.max; x--) //Terminating condition is x underflowing to uint.max
+		{
+			if(!e[x].isAlive)
+			{
+				version(assert)
+					assert(e[x].e.rc == 1 && e[x].e.pc == 0, 
+						"External references ("~to!string(e[x].e.rc-1)~" R, "~to!string(e[x].e.pc)~" P) to destroyed "~e[x].e.name~" detected.");
+
+				//TODO Permit weak references to linger. For debug version, track remaining weak references
+				//and complain if they aren't released within the next step.
+
+				//Swap, and update _proxy.
+				swap(e[x], e[s]);
+				e[s].e._proxy = &e[s];
+				e[x].e._proxy = &e[x];
+				s--;
+			}
+		}
+
+		//Delete them
+		if(s == uint.max || e[s].isAlive) s++;
+		entities.size = s; 
+		assert(!entities.moved); //Downsizing ought not reallocate.
 
 		//TODO Basic model LOD (sets active level for pose phase, renders different mesh)
 	}
 
 	void draw()
 	{
-		//##########
-		//Draw phase
-		//##########
-		window.bind;
-
-		double nt = looper.frameTime;
-
-		foreach(cable; cables)
-		{
-			if(cable.camera)
-			{
-				window.viewport = cable.viewport;
-			}
-		}
-
-		printGLError("after draw");
+		////////
+		//Draw//
+		////////
+		_phase = Phase.MetaDraw;
+		if(main) { main.meta(phase);
+			gl.checkError("Draw phase"); }
 	}
+
+
+
+	//TODO Templated iterator over entities implementing a specific interface.
+	//Use bit flags to accelerate searches for common interfaces.
 }
 
-/**
- * Helps with the main loop.
- * 
- * The main loop benefits from parallel execution with
- * a certain optimum number of helper threads. These
- * wait-idle until the game signals the start of a phase,
- * then begin processing entities.
- */
-private final class GameThread
+enum Phase
 {
-
-}
-
-version(unittest)
-{
-	import raider.engine.all;
-	import std.stdio;
-
-	final class Thing : Entity
-	{ mixin Entity.boilerplate;
-
-		void init()
-		{
-			writeln(factory.name~".init");
-		}
-
-		override void step(double dt)
-		{
-			writeln(factory.name~".step");
-			game.stop;
-		}
-	}
-	
-	final class ThingFactory : Factory
-	{ mixin(Factory.boilerplate!Thing);
-		
-	}
-}
-
-unittest
-{
-	R!Game game = New!Game();
-	game.INIT_ENTITY = "raider.engine.game.Thing";
-	game.run;
+	MetaLook, Look,
+	Step,
+	Dtor, Cleanup,
+	MetaDraw, Draw,
+	None
 }

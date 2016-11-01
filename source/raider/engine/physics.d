@@ -5,12 +5,11 @@ import raider.physics;
 import raider.engine.entity;
 import raider.tools.reference;
 
-/**
- * The Shape and Body classes, and all related
+/* The Shape and Body classes, and all related
  * classes, store user data. The type of that
  * data is given through a template argument.
  * 
- * The Engine makes use of such userdata. 
+ * The engine makes use of such userdata. 
  * To avoid requiring the developer to type
  * in the template arguments each time they
  * use the classes, aliases are defined and
@@ -21,7 +20,9 @@ import raider.tools.reference;
  * import and distinguish the originals.
  * The lesser of two inconveniences.
  * 
- * Void pointers are unwise.
+ * All this is done because void pointers 
+ * are unwise and people should feel bad 
+ * about using them.
  */
 package struct ShapeUserData
 {
