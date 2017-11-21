@@ -5,6 +5,7 @@ import std.conv;
 import core.atomic : atomicOp;
 import raider.engine.factory;
 import raider.engine.game;
+import raider.engine.logger;
 import raider.render;
 import raider.tools.array;
 import raider.tools.bag;
@@ -69,6 +70,7 @@ public:
 	@property P!Game game() { return _game; }
 	@property R!Factory factory() { return _factory; }
 	@property P!Entity parent() { return _proxy.parent; }
+	@property P!Logger log() { return _game.logger.p; }
 
 	this(P!Game game, R!Factory factory, P!Entity parent, uint phaseFlags)
 	{
@@ -89,13 +91,15 @@ public:
 
 		game.creche.add(proxy);
 
-		//Update proxy (consider adding move semantics to Array..)
+		//Not required anymore. Move semantics added.
+		/*
 		if(game.creche.moved)
 			foreach(ref e; game.creche) e.e._proxy = &e;
 		else
 			_proxy = &game.creche[][$-1];
 
-		game.creche.moved = false;
+		game.creche.moved = false; 
+		*/
 	}
 
 protected:
@@ -167,7 +171,7 @@ protected:
 					}
 					e.stepped = false;
 					assert(0.0 <= dt && dt <= 1.0, "Delta time "~to!string(dt)~" is outside acceptable range.");
-					e.dt = ftni!ushort(dt);
+					e.dt = ftni!ushort(dt); //ftni is float-to-normalised-integer (ushort in this case)
 				}
 			}
 		}
@@ -205,7 +209,8 @@ public:
 	 * at any time. They cannot avoid or undo it.
 	 * However, if destruction would violate the
 	 * rules of your application, use asserts to 
-	 * enforce them.
+	 * enforce them. Your entities don't need no
+	 * mods trying to give them trouble, nuh-uh.
 	 * 
 	 * Upon destruction, all references to an
 	 * entity must be cleaned up, except weak
@@ -242,8 +247,8 @@ public:
 	/**
 	 * Destructor phase.
 	 * 
-	 * Dtor (destructor) phase is called in place of ~this().
-	 * The true ~this() is only called sometime later, after 
+	 * Dtor (destructor) phase is called instead of ~this().
+	 * The true ~this() is only called some time later after 
 	 * deletions are finished cascading, but you don't need
 	 * to know that. It's just a fun fact. Or a boring one.
 	 * 
@@ -264,7 +269,8 @@ public:
 	 * processing it can based on that information. It is 
 	 * unaware of time passing. Physics and other contextual
 	 * information is likely to be available through a parent
-	 * 'container' entity.
+	 * 'container' entity. (But I don't know how you'll build
+	 * your game.)
 	 * 
 	 * Use depend() in this phase to require other entities to 
 	 * step() before this one, allowing to read updated state.
@@ -276,15 +282,19 @@ public:
 	 * 
 	 * During this phase, the entity may write to public members
 	 * and read from dependencies. It should step through time 
-	 * by dt seconds. This is the place to spawn or destroy 
-	 * entities, play sounds, adjust models, advance animations,
-	 * apply forces, set positions, update bounds, etc.
+	 * by some arbitrary measure; perhaps game.looper.dt, or the
+	 * time stepped by one of the physical bodies it owns (to 
+	 * match any effects applied through the physics engine).
+	 * 
+	 * This is the place to spawn or destroy entities, play 
+	 * sounds, adjust models, advance animations, apply forces, 
+	 * set positions, update bounds, etc. 
 	 * 
 	 * Note that many parts of the physics engine are thread-safe
-	 * and may be used during this phase. Other APIs might also
-	 * be available if they are properly synchronised.
+	 * and may be used during this and other phases. Other APIs 
+	 * might also be available if they are properly synchronised.
 	 */
-	void step(double dt);
+	void step();
 
 	/**
 	 * Draw phase.
@@ -299,8 +309,9 @@ public:
 	 * 
 	 * In a server, drawing is skipped.
 	 * 
-	 * If you wish to implement slow motion and motion blur, the
-	 * normalized time (nt) of the frame is provided.
+	 * If you wish to implement motion blur, the normalized time 
+	 * (nt) of the frame is provided. The phase will be repeated
+	 * for each sample composited. 
 	 * 
 	 * This phase is repeated for each observing camera. To skip
 	 * unnecessary work, a flag is provided on each model that 
@@ -333,8 +344,8 @@ public:
 	 * The step phase has no user-serviceable parts. Consequently, 
 	 * there is no Phase.MetaStep.
 	 * 
-	 * meta(Phase.MetaDraw) controls all drawing routines, 
-	 * configuring artists and windows, and calling drawChildren.
+	 * meta(Phase.MetaDraw) controls all rendering, by configuring 
+	 * artists and windows, and calling drawChildren.
 	 */
 	void meta(Phase phase);
 }
@@ -357,6 +368,13 @@ public:
  */
 package struct EntityProxy
 {
+	@disable this(this);
+
+	void _move()
+	{
+		if(e) e._proxy = this;
+	}
+
 	R!Entity e;
 	P!Entity parent;
 	union
@@ -415,6 +433,7 @@ package struct EntityProxy
 	}
 }
 
+
 interface Placeable
 {
 	/* aabb, obb
@@ -425,12 +444,14 @@ interface Placeable
 	 */
 }
 
+/*
+import raider.engine.physics;
+
 interface Environment
 {
-	/* Physics world
-	 * Sound context
-	 */
+	P!World world();
 }
+*/
 
 /* The rules, in brief:
  * 
@@ -442,13 +463,15 @@ interface Environment
  * The meta phases are single-threaded and have no rules.
  */
 
-/* 18-10-2016
+/* 2-8-2017
  * Regarding compound entities..
  * 
  * If you say, 'I want this entity to be composed of a few others',
  * well, first of all, consider not doing that, because that's a
  * door back to composition over inheritance. An entity is its own 
  * being; it doesn't share the fact of its existence with others.
+ * The components you wish to compose need to exist below the level
+ * of a game entity.
  * 
  * That said, if your entity needs to manage others, that's fine; 
  * just store a list of them in some fashion. You have the tools
@@ -462,13 +485,14 @@ interface Environment
  */
 
 /*
- * Regarding xentities (extensible entities)
+ * Regarding xentities (extensible entities.. extensities?)
  * This is a concept for a 'scripted' entity, driven entirely by XML.
  * It's designed to easily and dynamically create entities with simple behaviours.
  * Essentially it's a scripting language built from xml tags. They specify the same
  * look / step / draw phases, but only very simple instructions are available.
- * For instance, it can specify to create a physical object with a name, bounds, 
- * and model; it might then specify that model's material, colour, mesh, texture etc.
+ * For instance, it can use logic gates, then specify to create a physical object 
+ * with a name, bounds, and model; it might then specify that model's material, 
+ * colour, mesh, texture etc.
  * 
  * It is expected that xentities can replace the concept of prefabs. They avoid the 
  * overhead of maintaining code for them and compiling a huge number of nearly
@@ -486,6 +510,8 @@ interface Environment
  * run-time without exposing vulnerabilities. The script graphs (basically simplified 
  * abstract syntax trees) can be statically analysed to detect abusive operations. 
  * For instance, they can be checked for unbounded loops.
+ * 
+ * More complex and specialised logic tools can embed within this graph system.
  * 
  * Also, games can extend the basic xentity and implement their own types, with special tags.
  * 

@@ -5,9 +5,20 @@ import std.algorithm : swap;
 import std.conv;
 import raider.engine.entity;
 import raider.engine.register;
+import raider.engine.logger;
 import raider.render;
 import raider.math;
-import raider.tools; 
+import raider.tools;
+
+enum Phase
+{
+	MetaLook, Look,
+	Step,
+	Dtor, Cleanup,
+	MetaDraw, Draw,
+	None
+}
+
 /**
  * A container for all that is.
  */
@@ -19,6 +30,7 @@ final class Game
 	Array!EntityProxy entities;
 	Phase _phase; //Current phase of the game loop
 	P!Entity main;
+	R!Logger logger;
 
 public:
 
@@ -33,6 +45,7 @@ public:
 		looper = New!Looper();
 		creche.cached = true;
 		entities.cached = true;
+		logger = New!Logger();
 	}
 
 	~this()
@@ -43,20 +56,18 @@ public:
 	void run()
 	{
 		looper.start;
-		while(true)
+		while(looper.loop)
 		{
 			while(looper.step) step;
-			if(!looper.running) break;
 			draw;
 			_phase = Phase.None;
-			looper.sleep;
 		}
 
 	}
 
 	void stop()
 	{
-		looper.running = false;
+		looper.stop;
 		main._proxy.isAlive = false;
 		main = null;
 	}
@@ -147,24 +158,27 @@ public:
 		creche.move(entities);
 
 		//..and update _proxy.
-		if(entities.moved) n = 0; //Reallocation occurred; update the entire array.
-		foreach(ref e; entities[n .. $]) e.e._proxy = &e;
-		entities.moved = false;
+		//if(entities.moved) n = 0; //Reallocation occurred; update the entire array.
+		//foreach(ref e; entities[n .. $]) e.e._proxy = &e;
+		//entities.moved = false;
+		//Not required anymore. Move semantics added to allow for systemic memory compaction.
 
 		auto e = entities.ptr; //For convenience
 		uint s = entities.length-1;
-
+		
 		//Move dead entities to the end of the array
 		for(uint x = s; x != uint.max; x--) //Terminating condition is x underflowing to uint.max
 		{
 			if(!e[x].isAlive)
 			{
-				version(assert)
-					assert(e[x].e.rc == 1 && e[x].e.pc == 0, 
-						"External references ("~to!string(e[x].e.rc-1)~" R, "~to!string(e[x].e.pc)~" P) to destroyed "~e[x].e.name~" detected.");
+				//version(assert) //TODO Replace with unique reference semantics.
+				//	assert(e[x].e.rc == 1 && e[x].e.pc == 0, 
+				//		"External references ("~to!string(e[x].e.rc-1)~" R, "~to!string(e[x].e.pc)~" P) to destroyed "~e[x].e.name~" detected.");
 
-				//TODO Permit weak references to linger. For debug version, track remaining weak references
-				//and complain if they aren't released within the next step.
+				//TODO Permit weak references. Assert they are released within the next step.
+				// ..are shadow references a means to observe remaining weak references?
+				//I don't think this assertion is useful. Think about it - not every system
+				//is touched on every frame. 
 
 				//Swap, and update _proxy.
 				swap(e[x], e[s]);
@@ -177,7 +191,7 @@ public:
 		//Delete them
 		if(s == uint.max || e[s].isAlive) s++;
 		entities.size = s; 
-		assert(!entities.moved); //Downsizing ought not reallocate.
+		//assert(!entities.moved); //Downsizing ought not reallocate.
 
 		//TODO Basic model LOD (sets active level for pose phase, renders different mesh)
 	}
@@ -188,8 +202,11 @@ public:
 		//Draw//
 		////////
 		_phase = Phase.MetaDraw;
-		if(main) { main.meta(phase);
-			gl.checkError("Draw phase"); }
+		if(main)
+		{
+			main.meta(Phase.MetaDraw);
+			gl.checkError("Draw phase");
+		}
 	}
 
 
@@ -198,11 +215,3 @@ public:
 	//Use bit flags to accelerate searches for common interfaces.
 }
 
-enum Phase
-{
-	MetaLook, Look,
-	Step,
-	Dtor, Cleanup,
-	MetaDraw, Draw,
-	None
-}
