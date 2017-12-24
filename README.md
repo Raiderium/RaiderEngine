@@ -16,7 +16,7 @@ Thanks for taking a look. It's not complete, but one day it will be. This reposi
 - Discrete MPR collision with per-body measures against tunnelling
 - 3D sound with dynamic envelopes, propagation delay and effect regions
 - Object-oriented entity framework
-- XML parser (the killer feature)
+- XML parser
 - Stupidly fast binary formats, Blender asset exporters
 - Opus and VP8 (lossy and lossless) in webm and webp containers 
 - Unified networking, file access and (de)serialisation mechanisms
