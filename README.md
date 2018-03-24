@@ -17,6 +17,7 @@ Thanks for taking a look. It's not complete, but one day it will be. This reposi
 - 3D sound with dynamic envelopes, propagation delay and effect regions
 - Object-oriented entity framework
 - Stupidly fast binary formats, Blender asset exporters
+- Opus, WebP lossless, PNG, VP9, LZMA
 - Unified networking, file access and (de)serialisation mechanisms
 - Strictly one thread per logical core, spare time task scheduling
 - Cache-friendly with aggressive parallel execution strategies
