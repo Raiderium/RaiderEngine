@@ -1,0 +1,19 @@
+name "raider-engine"
+version "0.0.2"
+description "A small game engine."
+homepage "https://github.com/Raiderium/RaiderEngine"
+license "MIT"
+authors "Aiden Sibley"
+
+targetName "RaiderEngine"
+targetPath "lib"
+
+dependency "raider-audio" version=">0.0.0"
+dependency "raider-collision" version=">0.0.0"
+dependency "raider-math" version=">0.0.0"
+dependency "raider-physics" version=">0.0.0"
+dependency "raider-render" version=">0.0.0"
+dependency "raider-tools" version=">0.0.0"
+
+
+

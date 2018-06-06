@@ -22,14 +22,14 @@ enum Phase
 /**
  * A container for all that is.
  */
-final class Game
+@RC final class Game
 {package:
 	R!Register factories;
-	R!(Bag!(P!Entity)) dependencies;
+	R!(Bag!Entity) dependencies;
 	Array!EntityProxy creche; //Newly created entities live here, briefly.
 	Array!EntityProxy entities;
 	Phase _phase; //Current phase of the game loop
-	P!Entity main;
+	Entity main;
 	R!Logger logger;
 
 public:
@@ -41,10 +41,10 @@ public:
 	{
 		_phase = Phase.None;
 		factories = New!Register();
-		dependencies = New!(Bag!(P!Entity))();
+		dependencies = New!(Bag!Entity)();
 		looper = New!Looper();
-		creche.cached = true;
-		entities.cached = true;
+		creche.ratchet = true;
+		entities.ratchet = true;
 		logger = New!Logger();
 	}
 
@@ -88,7 +88,7 @@ public:
 		////////
 		_phase = Phase.Step;
 
-		if(!main) main = factories["Main"].create(P!Game(this));
+		if(!main) main = factories["Main"].create(this);
 
 		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL; 
 
@@ -101,7 +101,7 @@ public:
 				{
 					if(!e.stepped && e.e.dependees == 0)
 					{
-						e.e.step(nitf!double(e.dt)); //Step!
+						e.e.step; //Step! //nitf!double(e.dt) not used anymore
 						e.stepped = true;
 						atomicOp!"+="(steps, 1);
 
@@ -182,7 +182,7 @@ public:
 
 				//Swap, and update _proxy.
 				swap(e[x], e[s]);
-				e[s].e._proxy = &e[s];
+				e[s].e._proxy = &e[s]; //Not needed anymore? 
 				e[x].e._proxy = &e[x];
 				s--;
 			}

@@ -35,7 +35,7 @@ package struct SU
 
 package struct BU
 {
-	P!Entity e;
+	Entity e;
 }
 
 public alias raider.collision.Space!(ShapeData!(BU, SU)) Space;

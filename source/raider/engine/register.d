@@ -8,12 +8,13 @@ import std.array : split, join;
 import std.uni : toLower;
 import std.array : insertInPlace;
 import std.algorithm : cmp;
+import std.conv : to;
 
 
 /**
  * Wrangles factories.
  * 
- * Entities share one instance of their factory.
+ * Entities all share an instance of their associated factory.
  * That instance only lives while there is at least one entity,
  * or something is holding a reference to the factory.
  * 
@@ -26,12 +27,19 @@ import std.algorithm : cmp;
  * auto carFactory = game.factories["vehicles.car.Car"];
  * auto carFactory = game.factories["Car"];
  */
-final class Register
+@RC final class Register
 {private:
 	struct Key
 	{
 		string entity_name;
 		string entity_module;
+
+		string toString() const
+		{
+			return entity_module ~ "." ~ entity_name;
+		}
+
+		import std.stdio; //DEBUG
 
 		this(string pqen) // 'possibly qualified entity name' .. 
 		{ 
@@ -46,7 +54,7 @@ final class Register
 		 */
 		int opCmp(const Key that) const
 		{
-			if(entity_name == that.entity_name)
+			if(entity_name == that.entity_name && entity_module != "" && that.entity_module != "")
 				return cmp(entity_module, that.entity_module);
 			else
 				return cmp(entity_name, that.entity_name);
@@ -62,11 +70,6 @@ final class Register
 				(entity_module == "" || 
 				that.entity_module == "" ||
 				entity_module == that.entity_module);
-		}
-
-		string toString() const
-		{
-			return entity_module ~ entity_name;
 		}
 	}
 
@@ -105,16 +108,16 @@ public:
 			Key k = Key(name);
 
 			//Obtain factory
-			Value* v = factories.get(k);
+			Value* v = k in factories;
 
-			if(v) result = v.factory_weak.r; //Is the factory alive?
+			if(v) result = v.factory_weak._r; //Is the factory alive?
 			else throw new Exception("No entity called "~name~".");
 
 			//If not found, create it
 			if(result is null)
 			{
 				result = v.metafactory();
-				v.factory_weak = result.w;
+				v.factory_weak = result._w;
 			}
 		}
 		

@@ -15,14 +15,32 @@ import raider.tools.reference;
 /**
  * Something in a game that does stuff.
  * 
- * Entities live in a hierarchy. There are two
- * kinds of entity. Normal entities don't have 
- * children, only having siblings and a parent
- * 'meta' entity. Meta entities have children,
- * and their purpose is to provide a container
- * for groups. When destroyed, a meta entity's
- * children are also destroyed. They also help
- * add developer logic to the game loop.
+ * Entities live in a hierarchy. They can have
+ * siblings and children, and removing parents
+ * removes their children. The root is created
+ * when the game starts, by spawning an entity
+ * called 'Main', defined by the developer. It
+ * serves as the launching point for the whole
+ * affair, and is parent to everything else in
+ * the game.
+ * 
+ * There are two kinds of entity - normal, and
+ * meta. Normal entities do not have children,
+ * and are only ever children to a meta entity
+ * that acts as a container for them.
+ * 
+ * Normal entities implement normal game logic
+ * concerned with the interactions between the
+ * inhabitants of a world. Meta entities offer
+ * the developer a seamless way to control the
+ * main loop and inject logic that, in engines
+ * with more traditional views on such things,
+ * might require an interminable collection of
+ * callbacks and event managers. The developer
+ * uses them (for instance) to hold references
+ * to a physics world, and entities below them
+ * access that world intuitively, avoiding the
+ * temptation to use global variables.
  * 
  * This class is the centerpiece for a non-ECS
  * entity framework that contrasts hugely with
@@ -49,38 +67,76 @@ import raider.tools.reference;
  * 
  * We dissolve most issues with one rule:
  * 
- * All classes inheriting Entity are final.
+ * Entities must directly inherit Entity.
  * 
- * This rule is enforced at compile time. :)
+ * This flattens the inheritance tree, so that
+ * entities are effectively final, without the
+ * keyword being strictly required. The entity
+ * mixin 'Stuff' statically enforces the rule.
+ * 
+ * It might seem silly to take away one of the
+ * most defining tools of the paradigm, but in
+ * doing so, we avoid its pitfalls. In trading
+ * runtime composition for interfaces, we lose
+ * some flexibility, but gain simplicity and a
+ * not inconsequential measure of performance.
+ * 
+ * Is it worth it? The correct answer, that it
+ * comes down to preference, is apparently not
+ * correct, according to some. I get emotional
+ * when people are wrong on the Internet, thus
+ * this dumb little rant has a cause to exist.
+ * 
+ * The flexibility of ECS is the same found in
+ * scripting languages. It is duck typing, and
+ * while it has unquestionable advantages, the
+ * tradeoff is excessive in my mind. Having it
+ * available throughout a game engine, when in
+ * reality most entities don't need it at all,
+ * suggests a failure to optimise. And I could
+ * be wrong, but I think interfaces provide an
+ * alternative with potential that hasn't been
+ * realised. They are fast, very hard to abuse
+ * without meaning to, and easy to understand.
+ * 
+ * Let's at least see where this all leads. If
+ * I'm wrong, I'm wrong, and I'll admit ECS is
+ * the one true way to make big, modern games.
+ * If I'm right, no-one will particularly care
+ * about it, but I'll actually have a finished
+ * game to show y'all! That'll be exciting. :D
  */
-abstract class Entity
+@RC abstract class Entity
 {package:
-	P!Game _game;
+	Game _game;
 	R!Factory _factory;
 	EntityProxy* _proxy;
 	shared ushort dependees;
-	Pocket!(P!Entity) dependers;
+	Pocket!Entity dependers;
 
-	//this is the first invariant I ever used
-	invariant { assert(_proxy.e._referent == this); }
-	//it has .. proven its worth 
+	invariant {	//this is the first invariant I ever used
+		assert(_proxy !is null);
+		assert(_proxy.e is this);
+	} //it has proven its worth 
 
 public:
 	@property string name() { return _factory.entityName; }
-	@property P!Game game() { return _game; }
+	@property Game game() { return _game; }
 	@property R!Factory factory() { return _factory; }
-	@property P!Entity parent() { return _proxy.parent; }
-	@property P!Logger log() { return _game.logger.p; }
+	@property Entity parent() { return _proxy.parent; }
+	@property Logger log() { return _game.logger; }
 
-	this(P!Game game, R!Factory factory, P!Entity parent, uint phaseFlags)
+	this(Game game, R!Factory factory, Entity parent, uint phaseFlags)
 	{
 		_game = game;
 		_factory = factory;
 
-		EntityProxy proxy; //Do NOT use a struct initialiser.
-		proxy.flags = phaseFlags; 
-		proxy.e = R!Entity(this); //They don't copy the reference properly.
+		//Using a struct initialiser will fail to copy the 'e' reference correctly.
+		EntityProxy proxy; 
+		proxy.flags = phaseFlags;
+		proxy.e = this; 
 		proxy.parent = parent;
+		_proxy = &proxy; //Does this look dangerous to you? Hoi hoi hoi.
 
 		//congratulationsyouhaveachildokaybye
 		if(parent !is null)
@@ -90,16 +146,6 @@ public:
 		}
 
 		game.creche.add(proxy);
-
-		//Not required anymore. Move semantics added.
-		/*
-		if(game.creche.moved)
-			foreach(ref e; game.creche) e.e._proxy = &e;
-		else
-			_proxy = &game.creche[][$-1];
-
-		game.creche.moved = false; 
-		*/
 	}
 
 protected:
@@ -107,16 +153,15 @@ protected:
 	/**
 	 * Obtain permission to read an entity.
 	 * 
-	 * Call during the look phase, then read from the entity in 
-	 * the step phase. The entity is guaranteed to step before 
-	 * this one.
+	 * Call during the look phase, then read from the other entity 
+	 * in the step phase. It is guaranteed to step before this one.
 	 * 
 	 * Cyclic shenanigans will be detected and roused on.
 	 */
 	void depend(Entity other)
 	{
 		assert(game.phase == Phase.Look);
-		game.dependencies.add(P!Entity(this), other.dependers);
+		game.dependencies.add(this, other.dependers);
 		atomicOp!"+="(dependees, 1);
 		assert(dependees != 0); 
 	}
@@ -124,43 +169,49 @@ protected:
 	/**
 	 * Create an entity.
 	 * 
-	 * Pass an entity name, a factory, or a concrete factory.
+	 * Pass an entity name, a Factory, or a derived (concrete) factory.
 	 * Pass 'false' for the second argument unless you're a meta entity.
 	 * If you pass a concrete factory you can add extra arguments that
 	 * will be passed to the entity's ctor(). 
 	 */
-
-	P!Entity create(P!Factory factory, bool child = false)
-	{
-		return factory.create(game, child ? P!Entity(this) : parent, P!Entity(this));
-	}
-
-	P!Entity create(string name, bool child = false)
+	Entity create(string name, bool child = false)
 	{
 		auto factory = game.factories[name];
-		auto result = factory.create(game, child ? P!Entity(this) : parent, P!Entity(this));
-		return result;
+		auto result = factory.create(game, child ? this : parent, this);
+		return result; //todo why not return directly..? 
 	}
 
-	P!(F.ET) create(F:Factory, Args...)(P!F factory, bool child, Args args)
+	///ditto
+	Entity create(Factory factory, bool child = false)
 	{
-		return P!(F.ET)(factory.create(game, child ? P!Entity(this) : parent, P!Entity(this), args));
+		return factory.create(game, child ? this : parent, this);
+	}
+
+	///ditto
+	F.ET create(F:Factory, Args...)(F factory, bool child, Args args)
+	{
+		return F.ET(factory.create(game, child ? this : parent, this, args)); 
+		//I don't think a template method of the same name can coexist..
+		//..which means we can omit the child arg.
+		//Wait a minute we KNOW if an entity is meta.. ..oh but they can create siblings? erm..
+		//call parent.create! 
+		//If called on a non-meta entity (MUST HAVE PARENT), it creates a sibling. 
+		//On a meta (MAIN CANNOT HAVE PARENT), it creates a child.
 	}
 
 	/**
-	 * Meta phase assistant.
+	 * Meta phase convenience method.
 	 * 
-	 * Calls look() on non-meta children and schedules 
-	 * them for step(), specifying dt in seconds.
+	 * Calls look() on all non-meta children and schedules them for step().
 	 */
-	void scheduleChildren(double dt)
+	void scheduleChildren()
 	{
 		assert(game.phase == Phase.MetaLook);
 		game._phase = Phase.Look;
 		
 		foreach(ref e; game.entities) //Parallelify
 		{
-			if(!e.hasMeta && P!Entity(this) == e.parent && true) //TODO Add user filter (same for drawChildren)
+			if(!e.hasMeta && this is e.parent && true) //TODO Add user filter (same for drawChildren)
 			{
 				if(e.hasLook) e.e.look;
 				if(e.hasStep) {
@@ -170,8 +221,8 @@ protected:
 						//No, seriously, it's an actual thing.
 					}
 					e.stepped = false;
-					assert(0.0 <= dt && dt <= 1.0, "Delta time "~to!string(dt)~" is outside acceptable range.");
-					e.dt = ftni!ushort(dt); //ftni is float-to-normalised-integer (ushort in this case)
+					//assert(0.0 <= dt && dt <= 1.0, "Delta time "~to!string(dt)~" is outside acceptable range.");
+					//e.dt = ftni!ushort(dt); //ftni is float-to-normalised-integer (ushort in this case)
 				}
 			}
 		}
@@ -183,14 +234,14 @@ protected:
 	 * 
 	 * Calls draw on non-meta children.
 	 */
-	void drawChildren(P!Artist artist, double nt)
+	void drawChildren(Artist artist, double nt)
 	{
 		assert(game.phase == Phase.MetaDraw);
 		game._phase = Phase.Draw;
 		
 		foreach(ref e; game.entities) //Parallelify
 		{
-			if(e.hasDraw && !e.hasMeta && P!Entity(this) == e.parent && true) //Add user filter
+			if(e.hasDraw && !e.hasMeta && this is e.parent && true) //Add user filter
 				e.e.draw(artist, nt);
 		}
 		
@@ -232,15 +283,17 @@ public:
 	 * 
 	 * The rules of the step phase apply.
 	 * 
-	 * ctor can optionally accept a P!Entity reference to
+	 * ctor can optionally accept an Entity reference to
 	 * the entity that created this entity, plus other
 	 * arbitrary arguments if the creator is using a
 	 * concrete factory type.
 	 * 
 	 * Examples:
 	 * void ctor() { }
-	 * void ctor(P!Entity creator) { }
-	 * void ctor(P!Entity creator, uint x, ...) { }
+	 * void ctor(Entity creator) { }
+	 * void ctor(Entity creator, uint x, ...) { }
+	 * 
+	 * This stub exists for documentation purposes only.
 	 */
 	void _ctor() { /* Huzzah */ };
 
@@ -320,7 +373,7 @@ public:
 	 * is unnecessary unless the model must appear different to 
 	 * specific cameras. The camera is available as artist.camera.
 	 */
-	void draw(P!Artist artist, double nt);
+	void draw(Artist artist, double nt);
 
 	/**
 	 * Meta phase.
@@ -370,13 +423,14 @@ package struct EntityProxy
 {
 	@disable this(this);
 
-	void _move()
+	void _moved()
 	{
-		if(e) e._proxy = this;
+		assert(e);
+		e._proxy = &this;
 	}
 
 	R!Entity e;
-	P!Entity parent;
+	Entity parent;
 	union
 	{
 		uint flags = 0;
@@ -424,7 +478,7 @@ package struct EntityProxy
 		{
 			foreach(ref child; e.game.entities)
 			{
-				if(e == child.parent) result = dg(child);
+				if(e is child.parent) result = dg(child);
 				if(result) break;
 			}
 		}
@@ -449,7 +503,7 @@ import raider.engine.physics;
 
 interface Environment
 {
-	P!World world();
+	World world();
 }
 */
 
