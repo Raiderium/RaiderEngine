@@ -1,7 +1,7 @@
 ﻿module raider.engine.register;
 
-import core.sync.mutex;
-import raider.engine.factory;
+import core.sync.mutex : Mutex;
+import raider.engine.entity : Factory;
 import raider.tools.map;
 import raider.tools.reference;
 import std.array : split, join;
@@ -9,7 +9,6 @@ import std.uni : toLower;
 import std.array : insertInPlace;
 import std.algorithm : cmp;
 import std.conv : to;
-
 
 /**
  * Wrangles factories.
@@ -38,8 +37,6 @@ import std.conv : to;
 		{
 			return entity_module ~ "." ~ entity_name;
 		}
-
-		import std.stdio; //DEBUG
 
 		this(string pqen) // 'possibly qualified entity name' .. 
 		{ 

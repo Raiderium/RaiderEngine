@@ -31,9 +31,21 @@ mixin template Stuff()
 {
 	static if(is(typeof(super) == Entity))
 	{
+		import std.traits : hasUDA;
+
 		enum hasMeta = __traits(compiles, meta(Phase.init));
 		enum hasLook = __traits(compiles, look());
 		enum hasStep = __traits(compiles, step());
+		enum parallelStep = hasUDA!(step, Parallel);
+		/* TODO PARALLEL ENTITIES.
+		 * These would have a step() that can make use of parallel foreach.
+		 * After all their dependencies were stepped, they would step alone.
+		 * This requires nothing more than a means for the developer to indicate it.
+		 * No special task splitting required. No need to restrict it to metas.
+		 * Ideas: An attribute on step(). 
+		 * Another phase, 'para()' or somesuch.
+		 * An attribute on the entity (ugly, not specific enough..)
+		 */
 		enum hasDraw = __traits(compiles, draw(Artist.init, 0.0));
 		enum hasDtor = __traits(compiles, dtor());
 

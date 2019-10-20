@@ -1,8 +1,8 @@
 ﻿module raider.engine.physics;
 
-import raider.collision;
-import raider.physics;
-import raider.engine.entity;
+import rc = raider.collision;
+import rp = raider.physics;
+import raider.engine.entity : Entity;
 import raider.tools.reference;
 
 /* The Shape and Body classes, and all related
@@ -38,15 +38,15 @@ package struct BU
 	Entity e;
 }
 
-public alias raider.collision.Space!(ShapeData!(BU, SU)) Space;
-public alias raider.collision.Shape!(ShapeData!(BU, SU)) Shape;
-public alias raider.collision.Sphere!(ShapeData!(BU, SU)) Sphere;
-public alias raider.collision.Box!(ShapeData!(BU, SU)) Box;
+public alias rc.Space!(rp.ShapeData!(BU, SU)) Space;
+public alias rc.Shape!(rp.ShapeData!(BU, SU)) Shape;
+public alias rc.Sphere!(rp.ShapeData!(BU, SU)) Sphere;
+public alias rc.Box!(rp.ShapeData!(BU, SU)) Box;
 
-public alias raider.physics.Collider!(BU, SU) Collider;
-public alias raider.physics.World!(BU, SU) World;
-public alias raider.physics.Body!(BU, SU) Body;
-public alias raider.physics.Joint!(BU, SU) Joint;
-public alias raider.physics.Surface Surface;
+public alias rp.Collider!(BU, SU) Collider;
+public alias rp.World!(BU, SU) World;
+public alias rp.Body!(BU, SU) Body;
+public alias rp.Joint!(BU, SU) Joint;
+public alias rp.Surface Surface;
 
 

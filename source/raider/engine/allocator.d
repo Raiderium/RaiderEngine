@@ -11,7 +11,10 @@ module raider.engine.allocator;
  * Warmstarting is very important. Don't ignore it. 
  */
 
-import std.experimental.allocator.building_blocks.quantizer : Quantizer;
+//import std.experimental.allocator.building_blocks.quantizer : Quantizer;
 
 //TODO: Everything
+
+//Alternative: Simple allocator marches through free address space.
+//Incremental page compaction frees pages and reduces fragmentation.
 

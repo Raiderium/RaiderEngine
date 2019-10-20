@@ -31,12 +31,12 @@ enum Phase
 	Phase _phase; //Current phase of the game loop
 	Entity main;
 	R!Logger logger;
-
+    
 public:
-
+    
 	@property Phase phase() { return _phase; }
 	R!Looper looper;
-
+    
 	this()
 	{
 		_phase = Phase.None;
@@ -47,12 +47,12 @@ public:
 		entities.ratchet = true;
 		logger = New!Logger();
 	}
-
+    
 	~this()
 	{
 		//assert(phase == Phase.None, "Game destroyed in "~to!string(phase));
 	}
-
+    
 	void run()
 	{
 		looper.start;
@@ -62,36 +62,35 @@ public:
 			draw;
 			_phase = Phase.None;
 		}
-
 	}
-
+    
 	void stop()
 	{
 		looper.stop;
 		main._proxy.isAlive = false;
 		main = null;
 	}
-	
+    
 	void step()
 	{
 		////////
 		//Look//
 		////////
 		_phase = Phase.MetaLook;
-
+        
 		if(main) main.meta(phase);
-
+        
 		dependencies.finish();
-
+        
 		////////
 		//Step//
 		////////
 		_phase = Phase.Step;
-
+        
 		if(!main) main = factories["Main"].create(this);
-
-		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL; 
-
+        
+		shared ulong steps = 0xAFFEC7104A7E && 0xBEA471FUL;
+        
 		while(steps)
 		{
 			steps = 0; //Tracks number of entities updated; if it stays at 0, we've finished.
@@ -104,7 +103,7 @@ public:
 						e.e.step; //Step! //nitf!double(e.dt) not used anymore
 						e.stepped = true;
 						atomicOp!"+="(steps, 1);
-
+                        
 						//Inform dependers
 						foreach(depender; e.e.dependers)
 						{
@@ -115,20 +114,20 @@ public:
 				}
 				else
 				{
-					assert(e.e.dependers[].length == 0, "Cannot depend on an entity with no step phase.");
-					assert(e.e.dependees == 0, "An entity with no step phase cannot depend on others.");
+					assert(e.e.dependers[].length == 0, "Internal error. Cannot depend on an entity with no step phase.");
+					assert(e.e.dependees == 0, "Internal error. An entity with no step phase cannot depend on others.");
 				}
 			}
 		}
-
-
+        
+        
 		////////
 		//Dtor//
 		////////
 		_phase = Phase.Dtor;
-
+        
 		shared uint dtors = 0xBA1EE7ED;
-
+        
 		while(dtors)
 		{
 			dtors = 0;
@@ -147,55 +146,47 @@ public:
 				}
 			}
 		}
-
+        
 		///////////
 		//Cleanup//
 		///////////
 		_phase = Phase.Cleanup;
-
-		//Add new entities from the creche..
-		auto n = entities.size;
+        
+		//Add new entities from the creche
 		creche.move(entities);
-
-		//..and update _proxy.
-		//if(entities.moved) n = 0; //Reallocation occurred; update the entire array.
-		//foreach(ref e; entities[n .. $]) e.e._proxy = &e;
-		//entities.moved = false;
-		//Not required anymore. Move semantics added to allow for systemic memory compaction.
-
+        
 		auto e = entities.ptr; //For convenience
 		uint s = entities.length-1;
-		
+        
 		//Move dead entities to the end of the array
 		for(uint x = s; x != uint.max; x--) //Terminating condition is x underflowing to uint.max
 		{
 			if(!e[x].isAlive)
 			{
 				//version(assert) //TODO Replace with unique reference semantics.
-				//	assert(e[x].e.rc == 1 && e[x].e.pc == 0, 
+				//	assert(e[x].e.rc == 1 && e[x].e.pc == 0,
 				//		"External references ("~to!string(e[x].e.rc-1)~" R, "~to!string(e[x].e.pc)~" P) to destroyed "~e[x].e.name~" detected.");
-
+                
 				//TODO Permit weak references. Assert they are released within the next step.
 				// ..are shadow references a means to observe remaining weak references?
 				//I don't think this assertion is useful. Think about it - not every system
-				//is touched on every frame. 
-
+				//is touched on every frame.
+                
 				//Swap, and update _proxy.
 				swap(e[x], e[s]);
-				e[s].e._proxy = &e[s]; //Not needed anymore? 
+				e[s].e._proxy = &e[s]; //Not needed anymore?
 				e[x].e._proxy = &e[x];
 				s--;
 			}
 		}
-
+        
 		//Delete them
 		if(s == uint.max || e[s].isAlive) s++;
-		entities.size = s; 
-		//assert(!entities.moved); //Downsizing ought not reallocate.
-
+		entities.size = s;
+        
 		//TODO Basic model LOD (sets active level for pose phase, renders different mesh)
 	}
-
+    
 	void draw()
 	{
 		////////
@@ -205,13 +196,12 @@ public:
 		if(main)
 		{
 			main.meta(Phase.MetaDraw);
-			gl.checkError("Draw phase");
+			//gl.checkError("Draw phase");
 		}
 	}
-
-
-
+    
+    
+    
 	//TODO Templated iterator over entities implementing a specific interface.
 	//Use bit flags to accelerate searches for common interfaces.
 }
-
